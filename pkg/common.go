@@ -230,13 +230,13 @@ func dump_mdix(mdix uint8, mdix_ctrl uint8) {
 
 //from internal
 type cmd_context struct {
-	devname    string /* net device name */
-	fd         int    /* socket suitable for ethtool ioctl */
-	ifr        ifreq  /* ifreq suitable for ethtool ioctl */
-	argc       int    /* number of arguments to the sub-command */
-	argp       **byte /* arguments to the sub-command */
-	debug      uint64 /* debugging mask */
-	json       bool   /* Output JSON, if supported */
-	show_stats bool   /* include command-specific stats */
+	devname    string   /* net device name */
+	fd         int      /* socket suitable for ethtool ioctl */
+	ifr        ifreq    /* ifreq suitable for ethtool ioctl */
+	argc       int      /* number of arguments to the sub-command */
+	argp       []string /* arguments to the sub-command */
+	debug      uint64   /* debugging mask */
+	json       bool     /* Output JSON, if supported */
+	show_stats bool     /* include command-specific stats */
 	//netlink
 }

@@ -134,7 +134,7 @@ type ethtool_regs struct {
 	cmd     uint32
 	version uint32
 	len     uint32
-	data    []uint8
+	data    [MAX_DATA_BUF]uint8
 }
 
 type ethtool_eeprom struct {
@@ -142,7 +142,7 @@ type ethtool_eeprom struct {
 	magic  uint32
 	offset uint32
 	len    uint32
-	data   []uint8
+	data   [MAX_DATA_BUF]uint8
 }
 
 type ethtool_eee struct {
@@ -290,18 +290,21 @@ const (
 	ETH_SS_COUNT
 )
 
+const MAX_DATA_BUF = 65535
+
 type ethtool_gstrings struct {
 	cmd        uint32
 	string_set uint32
 	len        uint32
-	data       [0]uint8
+	data       [MAX_DATA_BUF]uint8
 }
 
 type ethtool_sset_info struct {
 	cmd       uint32
 	reserved  uint32
-	sset_mask uint32
-	data      [0]uint32
+	sset_mask uint64
+
+	// data *uint32
 }
 
 const (
@@ -316,18 +319,18 @@ type ethtool_test struct {
 	flags    uint32
 	reserved uint32
 	len      uint32
-	data     [0]uint64
+	data     [MAX_DATA_BUF]uint64
 }
 
 type ethtool_stats struct {
 	cmd     uint32
 	n_stats uint32
-	data    [0]uint8
+	data    [MAX_DATA_BUF]uint64
 }
 type ethtool_perm_addr struct {
 	cmd  uint32
 	size uint32
-	data [0]uint8
+	data [MAX_DATA_BUF]uint8
 }
 
 const (
@@ -421,12 +424,12 @@ type ethtool_rxnfc struct {
 
 	rule_cnt uint32 // union with rss_context;
 
-	rule_locs [0]uint32
+	rule_locs [MAX_DATA_BUF]uint32
 }
 type ethtool_rxfh_indir struct {
 	cmd        uint32
 	size       uint32
-	ring_index [0]uint32
+	ring_index [MAX_DATA_BUF]uint32
 }
 
 type ethtool_rxfh struct {
@@ -437,7 +440,7 @@ type ethtool_rxfh struct {
 	hfunc       uint8
 	rsvd8       [3]uint32
 	rsvd32      uint32
-	//    rss_config[0] uint32
+	rss_config  [MAX_DATA_BUF]uint32
 }
 
 const (
@@ -480,7 +483,7 @@ type ethtool_dump struct {
 	version uint32
 	flag    uint32
 	len     uint32
-	data    [0]uint8
+	data    [MAX_DATA_BUF]uint8
 }
 
 const ETH_FW_DUMP_DISABLE = 0
