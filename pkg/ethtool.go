@@ -366,23 +366,23 @@ type ethtool_usrip4_spec struct {
 }
 
 type ethtool_tcpip6_spec struct {
-	ip6src [4]uint32
-	ip6dst [4]uint32
+	ip6src [16]byte
+	ip6dst [16]byte
 	psrc   uint16
 	pdst   uint16
 	tclass uint8
 }
 
 type ethtool_ah_espip6_spec struct {
-	ip6src [4]uint32
-	ip6dst [4]uint32
+	ip6src [16]byte
+	ip6dst [16]byte
 	spi    uint32
 	tclass uint8
 }
 
 type ethtool_usrip6_spec struct {
-	ip6src     [4]uint32
-	ip6dst     [4]uint32
+	ip6src     [16]byte
+	ip6dst     [16]byte
 	l4_4_bytes uint32
 	tclass     uint8
 	l4_proto   uint8
@@ -416,6 +416,15 @@ const (
 	ETHTOOL_RX_FLOW_SPEC_RING_VF_OFF = 32
 )
 
+func ethtool_get_flow_spec_ring(ring_cookie uint64) uint64 {
+	return ETHTOOL_RX_FLOW_SPEC_RING & ring_cookie
+}
+
+func ethtool_get_flow_spec_ring_vf(ring_cookie uint64) uint64 {
+	return (ETHTOOL_RX_FLOW_SPEC_RING_VF & ring_cookie) >>
+		ETHTOOL_RX_FLOW_SPEC_RING_VF_OFF
+}
+
 type ethtool_rxnfc struct {
 	cmd       uint32
 	flow_type uint32
@@ -438,7 +447,7 @@ type ethtool_rxfh struct {
 	indir_size  uint32
 	key_size    uint32
 	hfunc       uint8
-	rsvd8       [3]uint32
+	rsvd8       [3]uint8
 	rsvd32      uint32
 	rss_config  [MAX_DATA_BUF]uint32
 }

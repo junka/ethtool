@@ -5,8 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"math"
+	"net"
 	"os"
 	"strconv"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -57,6 +59,146 @@ type feature_defs struct {
 	def [0]feature_def
 }
 
+func IPToUInt32(ipnr net.IP) uint32 {
+	bits := strings.Split(ipnr.String(), ".")
+
+	b0, _ := strconv.Atoi(bits[0])
+	b1, _ := strconv.Atoi(bits[1])
+	b2, _ := strconv.Atoi(bits[2])
+	b3, _ := strconv.Atoi(bits[3])
+	var sum uint32
+
+	sum += uint32(b0) << 24
+	sum += uint32(b1) << 16
+	sum += uint32(b2) << 8
+	sum += uint32(b3)
+
+	return sum
+}
+
+func parse_generic_cmdline(ctx *cmd_context,
+	changed *int,
+	info []cmdline_info,
+	n_info int) int {
+	argc := ctx.argc
+	argp := ctx.argp
+
+	for i := 0; i < argc; i++ {
+		found := 0
+		for idx := 0; idx < n_info; idx++ {
+			if info[idx].name == argp[i] {
+				found = 1
+				*changed = 1
+				if info[idx].tp != CMDL_FLAG &&
+					info[idx].seen_val != 0 {
+					*(*uint32)(unsafe.Pointer(info[idx].seen_val)) = 1
+				}
+				i += 1
+				if i >= argc {
+					return -1
+				}
+
+				switch info[idx].tp {
+				case CMDL_BOOL:
+					{
+						p := (*uint32)(unsafe.Pointer(info[idx].wanted_val))
+						if argp[i] == "on" {
+							*p = 1
+						} else if argp[i] == "off" {
+							*p = 0
+						} else {
+							return -1
+						}
+						break
+					}
+				case CMDL_S32:
+					{
+						p := (*int32)(unsafe.Pointer(info[idx].wanted_val))
+						val, _ := strconv.ParseInt(argp[i], 10, 32)
+						*p = int32(val)
+						break
+					}
+				case CMDL_U8:
+					{
+						p := (*uint8)(unsafe.Pointer(info[idx].wanted_val))
+						val, _ := strconv.ParseUint(argp[i], 10, 8)
+						*p = uint8(val)
+						break
+					}
+				case CMDL_U16:
+					{
+						p := (*uint16)(unsafe.Pointer(info[idx].wanted_val))
+						val, _ := strconv.ParseUint(argp[i], 10, 16)
+						*p = uint16(val)
+						break
+					}
+				case CMDL_U32:
+					{
+						p := (*uint32)(unsafe.Pointer(info[idx].wanted_val))
+						val, _ := strconv.ParseUint(argp[i], 10, 32)
+						*p = uint32(val)
+						break
+					}
+				case CMDL_U64:
+					{
+						p := (*uint64)(unsafe.Pointer(info[idx].wanted_val))
+						*p, _ = strconv.ParseUint(argp[i], 10, 64)
+						break
+					}
+				case CMDL_BE16:
+					{
+						p := (*int16)(unsafe.Pointer(info[idx].wanted_val))
+						val, _ := strconv.ParseUint(argp[i], 10, 16)
+						*p = int16(val)
+						break
+					}
+				case CMDL_IP4:
+					{
+						p := (*uint32)(unsafe.Pointer(info[idx].wanted_val))
+						addr := net.ParseIP(argp[i])
+						// if (!inet_aton(argp[i], &in)){
+						// 	exit_bad_args();
+						// }
+						*p = IPToUInt32(addr)
+						break
+					}
+				// case CMDL_MAC:
+				// 	get_mac_addr(argp[i],
+				// 		info[idx].wanted_val)
+				// 	break
+				case CMDL_FLAG:
+					{
+						p := (*uint32)(unsafe.Pointer(info[idx].seen_val))
+						*p |= info[idx].flag_val
+						if argp[i] == "on" {
+							p = (*uint32)(unsafe.Pointer((info[idx].wanted_val)))
+							*p |= info[idx].flag_val
+						} else if argp[i] == "off" {
+							// exit_bad_args()
+							return -1
+						}
+						break
+					}
+				case CMDL_STR:
+					{
+						s := (*[]byte)(unsafe.Pointer(info[idx].wanted_val))
+						copy(*s, (argp[i]))
+						break
+					}
+				default:
+					// exit_bad_args()
+					return -1
+				}
+				break
+			}
+		}
+		if found == 0 {
+			return -1
+		}
+	}
+	return 0
+}
+
 const SIOCETHTOOL = 0x8946
 
 func send_ioctl(ctx *cmd_context, cmd uintptr) error {
@@ -66,7 +208,7 @@ func send_ioctl(ctx *cmd_context, cmd uintptr) error {
 }
 
 func init_ioctl(ctx *cmd_context, no_dev bool) int {
-	if no_dev {
+	if no_dev == false {
 		ctx.fd = -1
 		return 0
 	}
@@ -85,6 +227,12 @@ func init_ioctl(ctx *cmd_context, no_dev bool) int {
 		return 70
 	}
 	return 0
+}
+
+func uninit_ioctl(ctx *cmd_context) {
+	if ctx.fd > 0 {
+		ioctl.Close(ctx.fd)
+	}
 }
 
 //
@@ -130,42 +278,8 @@ type driver_dump struct {
 	regdump_fn func(info *ethtool_drvinfo, regs *ethtool_regs)
 }
 
-var driver_list = []driver_dump{
-	// {"8139cp", realtek_dump_regs},
-	// {"8139too", realtek_dump_regs},
-	// {"r8169", realtek_dump_regs},
-	// {"de2104x", de2104x_dump_regs},
-	// {"e1000", e1000_dump_regs},
-	// {"e1000e", e1000_dump_regs},
-	// {"igb", igb_dump_regs},
-	// {"ixgb", ixgb_dump_regs},
-	// {"ixgbe", ixgbe_dump_regs},
-	// {"ixgbevf", ixgbevf_dump_regs},
-	// {"natsemi", natsemi_dump_regs},
-	// {"e100", e100_dump_regs},
-	// {"amd8111e", amd8111e_dump_regs},
-	// {"pcnet32", pcnet32_dump_regs},
-	// {"fec_8xx", fec_8xx_dump_regs},
-	// {"ibm_emac", ibm_emac_dump_regs},
-	// {"tg3", tg3_dump_regs},
-	// {"skge", skge_dump_regs},
-	// {"sky2", sky2_dump_regs},
-	// {"vioc", vioc_dump_regs},
-	// {"smsc911x", smsc911x_dump_regs},
-	// {"at76c50x-usb", at76c50x_usb_dump_regs},
-	// {"sfc", sfc_dump_regs},
-	// {"st_mac100", st_mac100_dump_regs},
-	// {"st_gmac", st_gmac_dump_regs},
-	// {"et131x", et131x_dump_regs},
-	// {"altera_tse", altera_tse_dump_regs},
-	// {"vmxnet3", vmxnet3_dump_regs},
-	// {"fjes", fjes_dump_regs},
-	// {"lan78xx", lan78xx_dump_regs},
-	// {"dsa", dsa_dump_regs},
-	// {"fec", fec_dump_regs},
-	// {"igc", igc_dump_regs},
-	// {"bnxt_en", bnxt_dump_regs},
-}
+// do not support pretty dump
+var driver_list = []driver_dump{}
 
 func dump_hex(file *os.File, data []uint8, len uint32, offset uint32) {
 
@@ -235,15 +349,9 @@ func dump_eeprom(geeprom_dump_raw int,
 		// fwrite(ee.data, 1, ee.len, stdout);
 		return 0
 	}
-	// #ifdef ETHTOOL_ENABLE_PRETTY_DUMP
-	// 	if (!strncmp("natsemi", info.driver, ETHTOOL_BUSINFO_LEN)) {
-	// 		return natsemi_dump_eeprom(info, ee);
-	// 	} else if (!strncmp("tg3", info.driver, ETHTOOL_BUSINFO_LEN)) {
-	// 		return tg3_dump_eeprom(info, ee);
-	// 	}
-	// #endif
+	//no support for pretty dump
 	// (*[4]uint8)(unsafe.Pointer(&ee.data[]))[:]
-	// dump_hex(os.Stdout, ee.data, ee.len, ee.offset)
+	dump_hex(os.Stdout, ee.data[:], ee.len, ee.offset)
 
 	return 0
 }
@@ -509,7 +617,7 @@ func linux_version_code() uint32 {
 		if r == 0 {
 			break
 		}
-		release += string(r)
+		release += fmt.Sprint(r)
 	}
 	_, err = fmt.Sscanf(release, "%u.%u.%u", &version, &patchlevel, &sublevel)
 	if err != nil {
@@ -850,6 +958,64 @@ func do_gpause(ctx *cmd_context) int {
 	} else {
 		dump_pause(&epause, 0, 0)
 	}
+	return 0
+}
+
+func do_spause(ctx *cmd_context) int {
+	var epause ethtool_pauseparam
+	gpause_changed := 0
+	pause_autoneg_wanted := -1
+	pause_rx_wanted := -1
+	pause_tx_wanted := -1
+	cmdline_pause := []cmdline_info{
+		{
+			name:       "autoneg",
+			tp:         CMDL_BOOL,
+			wanted_val: uintptr(unsafe.Pointer(&pause_autoneg_wanted)),
+			ioctl_val:  uintptr(unsafe.Pointer(&epause.autoneg)),
+		},
+		{
+			name:       "rx",
+			tp:         CMDL_BOOL,
+			wanted_val: uintptr(unsafe.Pointer(&pause_rx_wanted)),
+			ioctl_val:  uintptr(unsafe.Pointer(&epause.rx_pause)),
+		},
+		{
+			name:       "tx",
+			tp:         CMDL_BOOL,
+			wanted_val: uintptr(unsafe.Pointer(&pause_tx_wanted)),
+			ioctl_val:  uintptr(unsafe.Pointer(&epause.tx_pause)),
+		},
+	}
+	changed := 0
+
+	ret := parse_generic_cmdline(ctx, &gpause_changed, cmdline_pause, len(cmdline_pause))
+	if ret != 0 {
+		fmt.Printf("Parse cmdline args error\n")
+		return -1
+	}
+
+	epause.cmd = ETHTOOL_GPAUSEPARAM
+	err := send_ioctl(ctx, uintptr(unsafe.Pointer(&epause)))
+	if err != nil {
+		fmt.Printf("Cannot get device pause settings: %v\n", err)
+		return 77
+	}
+
+	// do_generic_set(cmdline_pause, len(cmdline_pause), &changed)
+
+	if changed == 0 {
+		fmt.Printf("no pause parameters changed, aborting\n")
+		return 78
+	}
+
+	epause.cmd = ETHTOOL_SPAUSEPARAM
+	err = send_ioctl(ctx, uintptr(unsafe.Pointer(&epause)))
+	if err != nil {
+		fmt.Printf("Cannot set device pause parameters: %v\n", err)
+		return 79
+	}
+
 	return 0
 }
 
@@ -1251,6 +1417,13 @@ func rxflow_str_to_type(str string) int {
 	return flow_type
 }
 
+const VERSION = "5.4.0"
+
+func do_version(ctx *cmd_context) int {
+	fmt.Printf("ethtool version %s\n", VERSION)
+	return 0
+}
+
 func do_grxclass(ctx *cmd_context) int {
 	var err error
 	nfccmd := ethtool_rxnfc{}
@@ -1341,7 +1514,7 @@ func do_tsinfo(ctx *cmd_context) int {
 
 func print_indir_table(ctx *cmd_context,
 	ring_count *ethtool_rxnfc,
-	indir_size uint32, indir *uint32) {
+	indir_size uint32, indir []uint32) {
 
 	fmt.Printf("RX flow hash indirection table for %s with %d RX ring(s):\n",
 		ctx.devname, ring_count.data)
@@ -1349,12 +1522,11 @@ func print_indir_table(ctx *cmd_context,
 	if indir_size == 0 {
 		fmt.Printf("Operation not supported\n")
 	}
-	slic_indir := *(*[MAX_DATA_BUF]uint32)(unsafe.Pointer(indir))
 	for i := uint32(0); i < indir_size; i++ {
 		if i%8 == 0 {
 			fmt.Printf("%5d: ", i)
 		}
-		fmt.Printf(" %5d", slic_indir[i])
+		fmt.Printf(" %5d", indir[i])
 		if i%8 == 7 || i == indir_size-1 {
 			fmt.Printf("\n")
 		}
@@ -1384,10 +1556,11 @@ func do_grxfhindir(ctx *cmd_context,
 		fmt.Printf("Cannot get RX flow hash indirection table")
 		return 1
 	}
-	print_indir_table(ctx, ring_count, indir.size, &indir.ring_index[0])
+	print_indir_table(ctx, ring_count, indir.size, indir.ring_index[:])
 
 	return 0
 }
+
 func do_grxfh(ctx *cmd_context) int {
 
 	rss_context := uint32(0)
@@ -1410,7 +1583,7 @@ func do_grxfh(ctx *cmd_context) int {
 	}
 	err := send_ioctl(ctx, uintptr(unsafe.Pointer(&ring_count)))
 	if err != nil {
-		fmt.Printf("Cannot get RX ring count")
+		fmt.Printf("Cannot get RX ring count\n")
 		return 1
 	}
 
@@ -1433,30 +1606,27 @@ func do_grxfh(ctx *cmd_context) int {
 		key_size:    rss_head.key_size,
 	}
 
-	// rssv := make([]uint32, rss_head.indir_size+rss_head.key_size/4)
-	// rss.rss_config = (*uint32)(unsafe.Pointer(&rssv[0]))
 	err = send_ioctl(ctx, uintptr(unsafe.Pointer(&rss)))
 	if err != nil {
 		fmt.Printf("Cannot get RX flow hash configuration")
 		return 1
 	}
 
-	print_indir_table(ctx, &ring_count, rss.indir_size, &rss.rss_config[0])
+	print_indir_table(ctx, &ring_count, rss.indir_size, rss.rss_config[:])
 
-	// cdata := *(*[]uint32)(unsafe.Pointer(rss.rss_config))
-
-	indir_bytes := unsafe.Pointer(&rss.rss_config[rss.indir_size])
-	hkey := *(*[]byte)(indir_bytes)
+	hkey := rss.rss_config[rss.indir_size:]
 
 	fmt.Printf("RSS hash key:\n")
 	if rss.key_size == 0 {
 		fmt.Printf("Operation not supported\n")
 	}
-	for i := uint32(0); i < rss.key_size; i++ {
-		if i == (rss.key_size - 1) {
-			fmt.Printf("%02x\n", hkey[i])
+	for i := uint32(0); i < rss.key_size/4; i++ {
+		if i == (rss.key_size/4 - 1) {
+			fmt.Printf("%02x:%02x:%02x:%02x\n", uint8(hkey[i])&0xFF, uint8(hkey[i]>>8)&0xFF,
+				uint8(hkey[i]>>16)&0xFF, uint8(hkey[i]>>24)&0xFF)
 		} else {
-			fmt.Printf("%02x:", hkey[i])
+			fmt.Printf("%02x:%02x:%02x:%02x:", uint8(hkey[i])&0xFF, uint8(hkey[i]>>8)&0xFF,
+				uint8(hkey[i]>>16)&0xFF, uint8(hkey[i]>>24)&0xFF)
 		}
 	}
 
@@ -1471,12 +1641,15 @@ func do_grxfh(ctx *cmd_context) int {
 		fmt.Printf("Cannot get hash functions names")
 		return 1
 	}
-
-	// for i := 0; i < hfuncs.len; i++{
-	// 	fmt.Printf("    %s: %s\n",
-	// 	       (const char *)hfuncs.data + i * ETH_GSTRING_LEN,
-	// 	       (rss.hfunc & (1 << i)) ? "on" : "off")
-	// }
+	func_str := "off"
+	for i := uint32(0); i < hfuncs.len; i++ {
+		if rss.hfunc&(1<<i) != 0 {
+			func_str = "on"
+		}
+		fmt.Printf("    %s: %s\n",
+			hfuncs.data[i*ETH_GSTRING_LEN:],
+			func_str)
+	}
 
 	return 0
 }
@@ -1711,18 +1884,10 @@ func do_getmodule(ctx *cmd_context) int {
 			geeprom_dump_hex = 1
 		} else if geeprom_dump_hex == 0 {
 			switch modinfo.tp {
-
 			case ETH_MODULE_SFF_8079:
-				//sff8079_show_all(eeprom.data)
-				break
 			case ETH_MODULE_SFF_8472:
-				// sff8079_show_all(eeprom.data)
-				// sff8472_show_all(eeprom.data)
-				break
 			case ETH_MODULE_SFF_8436:
 			case ETH_MODULE_SFF_8636:
-				// sff8636_show_all(eeprom.data,modinfo.eeprom_len)
-				break
 
 			default:
 				geeprom_dump_hex = 1
@@ -1767,7 +1932,7 @@ type options struct {
 
 var (
 	opt_args = []options{
-		{flag.Bool("s", false, "Change generic options"), false, nil, nil, "		[ speed %d ]\n" +
+		{flag.Bool("s", false, "Change generic options"), true, nil, nil, "		[ speed %d ]\n" +
 			"		[ duplex half|full ]\n" +
 			"		[ port tp|aui|bnc|mii|fibre|da ]\n" +
 			"		[ mdix auto|on|off ]\n" +
@@ -1779,12 +1944,12 @@ var (
 			"		[ sopass %x:%x:%x:%x:%x:%x ]\n" +
 			"		[ msglvl %d[/%d] | type on|off ... [--] ]\n" +
 			"		[ master-slave master-preferred|slave-preferred|master-force|slave-force ]\n"},
-		{flag.Bool("a", false, "Show pause options"), false, do_gpause, nil, ""},
-		{flag.Bool("A", false, "Set pause options"), false, nil, nil, "		[ autoneg on|off ]\n" +
+		{flag.Bool("a", false, "Show pause options"), true, do_gpause, nil, ""},
+		{flag.Bool("A", false, "Set pause options"), true, do_spause, nil, "		[ autoneg on|off ]\n" +
 			"		[ rx on|off ]\n" +
 			"		[ tx on|off ]\n"},
-		{flag.Bool("c", false, "Show coalesce options"), false, do_gcoalesce, nil, ""},
-		{flag.Bool("C", false, "Show pause options"), false, nil, nil, "		[adaptive-rx on|off]\n" +
+		{flag.Bool("c", false, "Show coalesce options"), true, do_gcoalesce, nil, ""},
+		{flag.Bool("C", false, "Show pause options"), true, nil, nil, "		[adaptive-rx on|off]\n" +
 			"		[adaptive-tx on|off]\n" +
 			"		[rx-usecs N]\n" +
 			"		[rx-frames N]\n" +
@@ -1806,34 +1971,34 @@ var (
 			"		[tx-usecs-high N]\n" +
 			"		[tx-frames-high N]\n" +
 			"		[sample-interval N]\n"},
-		{flag.Bool("g", false, "Query RX/TX ring parameters"), false, do_gring, nil, ""},
+		{flag.Bool("g", false, "Query RX/TX ring parameters"), true, do_gring, nil, ""},
 
-		{flag.Bool("G", false, "Set RX/TX ring parameters"), false, nil, nil, "		[ rx N ]\n" +
+		{flag.Bool("G", false, "Set RX/TX ring parameters"), true, nil, nil, "		[ rx N ]\n" +
 			"		[ rx-mini N ]\n" +
 			"		[ rx-jumbo N ]\n" +
 			"		[ tx N ]\n"},
-		{flag.Bool("k", false, "Get state of protocol offload and other features"), false, do_gfeatures, nil, ""},
-		{flag.Bool("K", false, "Set protocol offload and other features"), false, nil, nil, "		FEATURE on|off ...\n"},
+		{flag.Bool("k", false, "Get state of protocol offload and other features"), true, do_gfeatures, nil, ""},
+		{flag.Bool("K", false, "Set protocol offload and other features"), true, nil, nil, "		FEATURE on|off ...\n"},
 
-		{flag.Bool("i", false, "Show driver information"), false, do_gdrv, nil, ""},
-		{flag.Bool("d", false, "Do a register dump"), false, do_gregs, nil, "		[ raw on|off ]\n" +
+		{flag.Bool("i", false, "Show driver information"), true, do_gdrv, nil, ""},
+		{flag.Bool("d", false, "Do a register dump"), true, do_gregs, nil, "		[ raw on|off ]\n" +
 			"		[ file FILENAME ]\n"},
-		{flag.Bool("e", false, "Do a EEPROM dump"), false, do_geeprom, nil, "		[ raw on|off ]\n" +
+		{flag.Bool("e", false, "Do a EEPROM dump"), true, do_geeprom, nil, "		[ raw on|off ]\n" +
 			"		[ offset N ]\n" +
 			"		[ length N ]\n"},
-		{flag.Bool("E", false, "Change bytes in device EEPROM"), false, nil, nil, "		[ magic N ]\n" +
+		{flag.Bool("E", false, "Change bytes in device EEPROM"), true, nil, nil, "		[ magic N ]\n" +
 			"		[ offset N ]\n" +
 			"		[ length N ]\n" +
 			"		[ value N ]\n"},
-		{flag.Bool("r", false, "Restart N-WAY negotiation"), false, nil, nil, ""},
-		{flag.Bool("p", false, "Show visible port identification (e.g. blinking)"), false, do_phys_id, nil, "               [ TIME-IN-SECONDS ]\n"},
-		{flag.Bool("t", false, "Execute adapter self test"), false, nil, nil, "               [ online | offline | external_lb ]\n"},
-		{flag.Bool("S", false, "Show adapter statistics"), false, do_gnicstats, nil, ""},
-		{flag.Bool("phy-statistics", false, "Show phy statistics"), false, do_gphystats, nil, ""},
-		{flag.Bool("n", false, "Show Rx network flow classification options or rules"), false, do_grxclass, nil, "		[ rx-flow-hash tcp4|udp4|ah4|esp4|sctp4|" +
+		{flag.Bool("r", false, "Restart N-WAY negotiation"), true, nil, nil, ""},
+		{flag.Bool("p", false, "Show visible port identification (e.g. blinking)"), true, do_phys_id, nil, "               [ TIME-IN-SECONDS ]\n"},
+		{flag.Bool("t", false, "Execute adapter self test"), true, nil, nil, "               [ online | offline | external_lb ]\n"},
+		{flag.Bool("S", false, "Show adapter statistics"), true, do_gnicstats, nil, ""},
+		{flag.Bool("phy-statistics", false, "Show phy statistics"), true, do_gphystats, nil, ""},
+		{flag.Bool("n", false, "Show Rx network flow classification options or rules"), true, do_grxclass, nil, "		[ rx-flow-hash tcp4|udp4|ah4|esp4|sctp4|" +
 			"tcp6|udp6|ah6|esp6|sctp6 [context %d] |\n" +
 			"		  rule %d ]\n"},
-		{flag.Bool("N", false, "Configure Rx network flow classification options or rules"), false, nil, nil, "		rx-flow-hash tcp4|udp4|ah4|esp4|sctp4|" +
+		{flag.Bool("N", false, "Configure Rx network flow classification options or rules"), true, nil, nil, "		rx-flow-hash tcp4|udp4|ah4|esp4|sctp4|" +
 			"tcp6|udp6|ah6|esp6|sctp6 m|v|t|s|d|f|n|r... [context %d] |\n" +
 			"		flow-type ether|ip4|tcp4|udp4|sctp4|ah4|esp4|" +
 			"ip6|tcp6|udp6|ah6|esp6|sctp6\n" +
@@ -1856,46 +2021,46 @@ var (
 			"			[ context %d ]\n" +
 			"			[ loc %d]] |\n" +
 			"		delete %d\n"},
-		{flag.Bool("T", false, "Show time stamping capabilities"), false, do_tsinfo, nil, ""},
-		{flag.Bool("x", false, "Show Rx flow hash indirection table and/or RSS hash key"), false, do_grxfh, nil, "		[ context %d ]\n"},
-		{flag.Bool("-X|--set-rxfh-indir|--rxfh", false, "Set Rx flow hash indirection table and/or RSS hash key"), false, nil, nil, "		[ context %d|new ]\n" +
+		{flag.Bool("T", false, "Show time stamping capabilities"), true, do_tsinfo, nil, ""},
+		{flag.Bool("x", false, "Show Rx flow hash indirection table and/or RSS hash key"), true, do_grxfh, nil, "		[ context %d ]\n"},
+		{flag.Bool("X|--set-rxfh-indir|--rxfh", false, "Set Rx flow hash indirection table and/or RSS hash key"), true, nil, nil, "		[ context %d|new ]\n" +
 			"		[ equal N | weight W0 W1 ... | default ]\n" +
 			"		[ hkey %x:%x:%x:%x:%x:.... ]\n" +
 			"		[ hfunc FUNC ]\n" +
 			"		[ delete ]\n"},
-		{flag.Bool("f", false, "Flash firmware image from the specified file to a region on the device"), false, nil, nil, "               FILENAME [ REGION-NUMBER-TO-FLASH ]\n"},
-		{flag.Bool("P", false, "Show permanent hardware address"), false, do_permaddr, nil, ""},
-		{flag.Bool("w", false, "Get dump flag, data"), false, do_getfwdump, nil, "		[ data FILENAME ]\n"},
-		{flag.Bool("W", false, "Set dump flag of the device"), false, nil, nil, "		N\n"},
-		{flag.Bool("l", false, "Query Channels"), false, do_gchannels, nil, ""},
-		{flag.Bool("L", false, "Set Channels"), false, nil, nil, "               [ rx N ]\n" +
+		{flag.Bool("f", false, "Flash firmware image from the specified file to a region on the device"), true, nil, nil, "               FILENAME [ REGION-NUMBER-TO-FLASH ]\n"},
+		{flag.Bool("P", false, "Show permanent hardware address"), true, do_permaddr, nil, ""},
+		{flag.Bool("w", false, "Get dump flag, data"), true, do_getfwdump, nil, "		[ data FILENAME ]\n"},
+		{flag.Bool("W", false, "Set dump flag of the device"), true, nil, nil, "		N\n"},
+		{flag.Bool("l", false, "Query Channels"), true, do_gchannels, nil, ""},
+		{flag.Bool("L", false, "Set Channels"), true, nil, nil, "               [ rx N ]\n" +
 			"               [ tx N ]\n" +
 			"               [ other N ]\n" +
 			"               [ combined N ]\n"},
-		{flag.Bool("show-priv-flags", false, "Query private flags"), false, do_gprivflags, nil, ""},
-		{flag.Bool("set-priv-flag", false, "Set private flags"), false, nil, nil, "		FLAG on|off ...\n"},
-		{flag.Bool("m", false, "Query/Decode Module EEPROM information and optical diagnostics if available"), false, do_getmodule, nil, "		[ raw on|off ]\n" +
+		{flag.Bool("show-priv-flags", false, "Query private flags"), true, do_gprivflags, nil, ""},
+		{flag.Bool("set-priv-flag", false, "Set private flags"), true, nil, nil, "		FLAG on|off ...\n"},
+		{flag.Bool("m", false, "Query/Decode Module EEPROM information and optical diagnostics if available"), true, do_getmodule, nil, "		[ raw on|off ]\n" +
 			"		[ hex on|off ]\n" +
 			"		[ offset N ]\n" +
 			"		[ length N ]\n"},
-		{flag.Bool("show-eee", false, "Show EEE settings"), false, do_geee, nil, ""},
-		{flag.Bool("set-eee", false, "Set EEE settings"), false, nil, nil, "		[ eee on|off ]\n" +
+		{flag.Bool("show-eee", false, "Show EEE settings"), true, do_geee, nil, ""},
+		{flag.Bool("set-eee", false, "Set EEE settings"), true, nil, nil, "		[ eee on|off ]\n" +
 			"		[ advertise %x ]\n" +
 			"		[ tx-lpi on|off ]\n" +
 			"		[ tx-timer %d ]\n"},
-		{flag.Bool("set-phy-tunable", false, "Set PHY tunable"), false, nil, nil, "		[ downshift on|off [count N] ]\n" +
+		{flag.Bool("set-phy-tunable", false, "Set PHY tunable"), true, nil, nil, "		[ downshift on|off [count N] ]\n" +
 			"		[ fast-link-down on|off [msecs N] ]\n" +
 			"		[ energy-detect-power-down on|off [msecs N] ]\n"},
-		{flag.Bool("get-phy-tunable", false, "Get PHY tunable"), false, nil, nil, "		[ downshift ]\n" +
+		{flag.Bool("get-phy-tunable", false, "Get PHY tunable"), true, nil, nil, "		[ downshift ]\n" +
 			"		[ fast-link-down ]\n" +
 			"		[ energy-detect-power-down ]\n"},
-		{flag.Bool("set-tunable", false, "Set tunable"), false, nil, nil, "		[ rx-copybreak N]\n" +
+		{flag.Bool("set-tunable", false, "Set tunable"), true, nil, nil, "		[ rx-copybreak N]\n" +
 			"		[ tx-copybreak N]\n" +
 			"		[ pfc-precention-tout N]\n"},
-		{flag.Bool("get-tunable", false, "Get tunable"), false, nil, nil, "		[ rx-copybreak ]\n" +
+		{flag.Bool("get-tunable", false, "Get tunable"), true, nil, nil, "		[ rx-copybreak ]\n" +
 			"		[ tx-copybreak ]\n" +
 			"		[ pfc-precention-tout ]\n"},
-		{flag.Bool("reset", false, "Reset components"), false, nil, nil, "		[ flags %x ]\n" +
+		{flag.Bool("reset", false, "Reset components"), true, nil, nil, "		[ flags %x ]\n" +
 			"		[ mgmt ]\n" +
 			"		[ mgmt-shared ]\n" +
 			"		[ irq ]\n" +
@@ -1916,17 +2081,17 @@ var (
 			"		[ ap-shared ]\n" +
 			"		[ dedicated ]\n" +
 			"		[ all ]\n"},
-		{flag.Bool("-show-fec", false, "Show FEC setting"), false, nil, nil, ""},
-		{flag.Bool("-set-fec", false, "Set FEC setting"), false, nil, nil, "		[ encoding auto|off|rs|baser|llrs [...]]\n"},
-		{flag.Bool("Q", false, "Apply per-queue command."), false, nil, nil, "The supported sub commands include --show-coalesce, --coalesce" +
+		{flag.Bool("show-fec", false, "Show FEC setting"), true, nil, nil, ""},
+		{flag.Bool("set-fec", false, "Set FEC setting"), true, nil, nil, "		[ encoding auto|off|rs|baser|llrs [...]]\n"},
+		{flag.Bool("Q", false, "Apply per-queue command."), true, nil, nil, "The supported sub commands include --show-coalesce, --coalesce" +
 			"             [queue_mask %x] SUB_COMMAND\n"},
-		{flag.Bool("-cable-test", false, "Perform a cable test"), false, nil, nil, ""},
-		{flag.Bool("-cable-test-tdr", false, "Print cable test time domain reflectrometery data"), false, nil, nil, "		[ first N ]\n" +
+		{flag.Bool("cable-test", false, "Perform a cable test"), true, nil, nil, ""},
+		{flag.Bool("cable-test-tdr", false, "Print cable test time domain reflectrometery data"), true, nil, nil, "		[ first N ]\n" +
 			"		[ last N ]\n" +
 			"		[ step N ]\n" +
 			"		[ pair N ]\n"},
-		{flag.Bool("-show-tunnels", false, "Show NIC tunnel offload information"), false, nil, nil, ""},
-		{flag.Bool("-version", false, "Show version number"), false, nil, nil, ""},
+		{flag.Bool("show-tunnels", false, "Show NIC tunnel offload information"), true, nil, nil, ""},
+		{flag.Bool("version", false, "Show version number"), false, do_version, nil, ""},
 	}
 )
 
@@ -1964,10 +2129,14 @@ func Parse_args() error {
 // Do_actions will call ioctl to get or set infos
 func Do_actions() int {
 	var ctx cmd_context
-	no_dev := false
+	no_dev := true
 	i := 0
+
 	for ; i < len(opt_args); i++ {
 		if *opt_args[i].opts {
+			if opt_args[i].no_dev == false {
+				no_dev = false
+			}
 			break
 		}
 	}
@@ -1975,11 +2144,25 @@ func Do_actions() int {
 		return -1
 	}
 	args := flag.Args()
-	ctx.devname = args[0]
+	ctx.argc = len(args) - 1
+	ctx.argp = args[1:]
+	if no_dev == true {
+		if len(args) == 0 {
+			fmt.Printf("ethtool: bad command line argument(s)\n" +
+				"For more information run ethtool -h\n")
+			return -1
+		}
+		ctx.devname = args[0]
+	}
+	if opt_args[i].ioctlfunc == nil {
+		fmt.Printf("Function not supported yet\n")
+		return -1
+	}
 	err := init_ioctl(&ctx, no_dev)
 	if err != 0 {
 		return err
 	}
+	defer uninit_ioctl(&ctx)
 	return opt_args[i].ioctlfunc(&ctx)
 }
 

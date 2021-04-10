@@ -1,6 +1,7 @@
 package ethtool
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net"
 	"unsafe"
@@ -34,18 +35,16 @@ func rxclass_print_ipv4_rule(sip uint32, sipm uint32, dip uint32,
 		tos, tosm)
 }
 
-func rxclass_print_ipv6_rule(sip uint32, sipm uint32, dip uint32,
-	dipm uint32, tclass uint8, tclassm uint8) {
+func rxclass_print_ipv6_rule(sip [16]byte, sipm [16]byte, dip [16]byte,
+	dipm [16]byte, tclass uint8, tclassm uint8) {
 
-	// fmt.Printf(
-	// 	"\tSrc IP addr: %s mask: %s\n"+
-	// 	"\tDest IP addr: %s mask: %s\n"+
-	// 	"\tTraffic Class: 0x%x mask: 0x%x\n",
-	// 	inet_ntop(AF_INET6, sip, sip_str, INET6_ADDRSTRLEN),
-	// 	inet_ntop(AF_INET6, sipm, sipm_str, INET6_ADDRSTRLEN),
-	// 	inet_ntop(AF_INET6, dip, dip_str, INET6_ADDRSTRLEN),
-	// 	inet_ntop(AF_INET6, dipm, dipm_str, INET6_ADDRSTRLEN),
-	// 	tclass, tclassm);
+	fmt.Printf(
+		"\tSrc IP addr: %s mask: %s\n"+
+			"\tDest IP addr: %s mask: %s\n"+
+			"\tTraffic Class: 0x%x mask: 0x%x\n",
+		net.IP(sip[:]).String(), net.IP(sipm[:]).String(),
+		net.IP(dip[:]).String(), net.IP(dipm[:]).String(),
+		tclass, tclassm)
 }
 
 func rxclass_print_nfc_spec_ext(fsp *ethtool_rx_flow_spec) {
@@ -103,19 +102,33 @@ func rxclass_print_nfc_rule(fsp *ethtool_rx_flow_spec,
 		} else {
 			fmt.Printf("\tRule Type: SCTP over IPv4\n")
 		}
-		// rxclass_print_ipv4_rule(fsp.h_u.tcp_ip4_spec.ip4src,
-		// 	fsp.m_u.tcp_ip4_spec.ip4src,
-		// 	fsp.h_u.tcp_ip4_spec.ip4dst,
-		// 	fsp.m_u.tcp_ip4_spec.ip4dst,
-		// 	fsp.h_u.tcp_ip4_spec.tos,
-		// 	fsp.m_u.tcp_ip4_spec.tos)
-		// fmt.Printf(
-		// 	"\tSrc port: %d mask: 0x%x\n"
-		// 	"\tDest port: %d mask: 0x%x\n",
-		// 	binary.littleEndian (fsp.h_u.tcp_ip4_spec.psrc),
-		// 	ntohs(fsp.m_u.tcp_ip4_spec.psrc),
-		// 	ntohs(fsp.h_u.tcp_ip4_spec.pdst),
-		// 	ntohs(fsp.m_u.tcp_ip4_spec.pdst));
+		tcp_ip4_spec := ethtool_tcpip4_spec{
+			ip4src: binary.LittleEndian.Uint32(fsp.h_u.hdata[0:3]),
+			ip4dst: binary.LittleEndian.Uint32(fsp.h_u.hdata[4:7]),
+			psrc:   binary.LittleEndian.Uint16(fsp.h_u.hdata[8:9]),
+			pdst:   binary.LittleEndian.Uint16(fsp.h_u.hdata[10:11]),
+			tos:    fsp.h_u.hdata[12],
+		}
+		tcp_ip4_mask := ethtool_tcpip4_spec{
+			ip4src: binary.LittleEndian.Uint32(fsp.m_u.hdata[0:3]),
+			ip4dst: binary.LittleEndian.Uint32(fsp.m_u.hdata[4:7]),
+			psrc:   binary.LittleEndian.Uint16(fsp.m_u.hdata[8:9]),
+			pdst:   binary.LittleEndian.Uint16(fsp.m_u.hdata[10:11]),
+			tos:    fsp.m_u.hdata[12],
+		}
+		rxclass_print_ipv4_rule(tcp_ip4_spec.ip4src,
+			tcp_ip4_mask.ip4src,
+			tcp_ip4_spec.ip4dst,
+			tcp_ip4_mask.ip4dst,
+			tcp_ip4_spec.tos,
+			tcp_ip4_mask.tos)
+		fmt.Printf(
+			"\tSrc port: %d mask: 0x%x\n"+
+				"\tDest port: %d mask: 0x%x\n",
+			tcp_ip4_spec.psrc,
+			tcp_ip4_mask.psrc,
+			tcp_ip4_spec.pdst,
+			tcp_ip4_mask.pdst)
 		break
 	case AH_V4_FLOW:
 	case ESP_V4_FLOW:
@@ -124,32 +137,60 @@ func rxclass_print_nfc_rule(fsp *ethtool_rx_flow_spec,
 		} else {
 			fmt.Printf("\tRule Type: IPSEC ESP over IPv4\n")
 		}
-		// rxclass_print_ipv4_rule(fsp.h_u.ah_ip4_spec.ip4src,
-		// 	fsp.m_u.ah_ip4_spec.ip4src,
-		// 	fsp.h_u.ah_ip4_spec.ip4dst,
-		// 	fsp.m_u.ah_ip4_spec.ip4dst,
-		// 	fsp.h_u.ah_ip4_spec.tos,
-		// 	fsp.m_u.ah_ip4_spec.tos)
-		// fmt.Printf(
-		// 	"\tSPI: %d mask: 0x%x\n",
-		// 	ntohl(fsp.h_u.esp_ip4_spec.spi),
-		// 	ntohl(fsp.m_u.esp_ip4_spec.spi));
+		ah_ip4_spec := ethtool_ah_espip4_spec{
+			ip4src: binary.LittleEndian.Uint32(fsp.h_u.hdata[0:3]),
+			ip4dst: binary.LittleEndian.Uint32(fsp.h_u.hdata[4:7]),
+			spi:    binary.LittleEndian.Uint32(fsp.h_u.hdata[8:11]),
+			tos:    fsp.h_u.hdata[12],
+		}
+		ah_ip4_mask := ethtool_ah_espip4_spec{
+			ip4src: binary.LittleEndian.Uint32(fsp.m_u.hdata[0:3]),
+			ip4dst: binary.LittleEndian.Uint32(fsp.m_u.hdata[4:7]),
+			spi:    binary.LittleEndian.Uint32(fsp.m_u.hdata[8:11]),
+			tos:    fsp.m_u.hdata[12],
+		}
+		rxclass_print_ipv4_rule(ah_ip4_spec.ip4src,
+			ah_ip4_mask.ip4src,
+			ah_ip4_spec.ip4dst,
+			ah_ip4_mask.ip4dst,
+			ah_ip4_spec.tos,
+			ah_ip4_mask.tos)
+
+		fmt.Printf("\tSPI: %d mask: 0x%x\n",
+			ah_ip4_spec.spi,
+			ah_ip4_mask.spi)
 		break
 	case IPV4_USER_FLOW:
 		fmt.Printf("\tRule Type: Raw IPv4\n")
-		// rxclass_print_ipv4_rule(fsp.h_u.usr_ip4_spec.ip4src,
-		// 	fsp.m_u.usr_ip4_spec.ip4src,
-		// 	fsp.h_u.usr_ip4_spec.ip4dst,
-		// 	fsp.m_u.usr_ip4_spec.ip4dst,
-		// 	fsp.h_u.usr_ip4_spec.tos,
-		// 	fsp.m_u.usr_ip4_spec.tos)
-		// fmt.Printf(
-		// 	"\tProtocol: %d mask: 0x%x\n"
-		// 	"\tL4 bytes: 0x%x mask: 0x%x\n",
-		// 	fsp.h_u.usr_ip4_spec.proto,
-		// 	fsp.m_u.usr_ip4_spec.proto,
-		// 	ntohl(fsp.h_u.usr_ip4_spec.l4_4_bytes),
-		// 	ntohl(fsp.m_u.usr_ip4_spec.l4_4_bytes));
+		usr_ip4_spec := ethtool_usrip4_spec{
+			ip4src:     binary.LittleEndian.Uint32(fsp.h_u.hdata[0:3]),
+			ip4dst:     binary.LittleEndian.Uint32(fsp.h_u.hdata[4:7]),
+			l4_4_bytes: binary.LittleEndian.Uint32(fsp.h_u.hdata[8:11]),
+			tos:        fsp.h_u.hdata[12],
+			ip_ver:     fsp.h_u.hdata[13],
+			proto:      fsp.h_u.hdata[14],
+		}
+		usr_ip4_mask := ethtool_usrip4_spec{
+			ip4src:     binary.LittleEndian.Uint32(fsp.m_u.hdata[0:3]),
+			ip4dst:     binary.LittleEndian.Uint32(fsp.m_u.hdata[4:7]),
+			l4_4_bytes: binary.LittleEndian.Uint32(fsp.m_u.hdata[8:11]),
+			tos:        fsp.m_u.hdata[12],
+			ip_ver:     fsp.m_u.hdata[13],
+			proto:      fsp.m_u.hdata[14],
+		}
+		rxclass_print_ipv4_rule(usr_ip4_spec.ip4src,
+			usr_ip4_mask.ip4src,
+			usr_ip4_spec.ip4dst,
+			usr_ip4_mask.ip4dst,
+			usr_ip4_spec.tos,
+			usr_ip4_mask.tos)
+		fmt.Printf(
+			"\tProtocol: %d mask: 0x%x\n"+
+				"\tL4 bytes: 0x%x mask: 0x%x\n",
+			usr_ip4_spec.proto,
+			usr_ip4_mask.proto,
+			usr_ip4_spec.l4_4_bytes,
+			usr_ip4_mask.l4_4_bytes)
 		break
 	case TCP_V6_FLOW:
 	case UDP_V6_FLOW:
@@ -161,19 +202,33 @@ func rxclass_print_nfc_rule(fsp *ethtool_rx_flow_spec,
 		} else {
 			fmt.Printf("\tRule Type: SCTP over IPv6\n")
 		}
-		// rxclass_print_ipv6_rule(fsp.h_u.tcp_ip6_spec.ip6src,
-		// 	fsp.m_u.tcp_ip6_spec.ip6src,
-		// 	fsp.h_u.tcp_ip6_spec.ip6dst,
-		// 	fsp.m_u.tcp_ip6_spec.ip6dst,
-		// 	fsp.h_u.tcp_ip6_spec.tclass,
-		// 	fsp.m_u.tcp_ip6_spec.tclass)
-		// fmt.Printf(
-		// 	"\tSrc port: %d mask: 0x%x\n"
-		// 	"\tDest port: %d mask: 0x%x\n",
-		// 	ntohs(fsp.h_u.tcp_ip6_spec.psrc),
-		// 	ntohs(fsp.m_u.tcp_ip6_spec.psrc),
-		// 	ntohs(fsp.h_u.tcp_ip6_spec.pdst),
-		// 	ntohs(fsp.m_u.tcp_ip6_spec.pdst));
+		tcp_ip6_spec := ethtool_tcpip6_spec{
+			psrc:   binary.LittleEndian.Uint16(fsp.h_u.hdata[32:33]),
+			pdst:   binary.LittleEndian.Uint16(fsp.h_u.hdata[34:35]),
+			tclass: fsp.h_u.hdata[36],
+		}
+		copy(tcp_ip6_spec.ip6src[:], fsp.h_u.hdata[0:15])
+		copy(tcp_ip6_spec.ip6dst[:], fsp.h_u.hdata[16:31])
+		tcp_ip6_mask := ethtool_tcpip6_spec{
+			psrc:   binary.LittleEndian.Uint16(fsp.m_u.hdata[32:33]),
+			pdst:   binary.LittleEndian.Uint16(fsp.m_u.hdata[34:35]),
+			tclass: fsp.m_u.hdata[36],
+		}
+		copy(tcp_ip6_mask.ip6src[:], fsp.m_u.hdata[0:15])
+		copy(tcp_ip6_mask.ip6dst[:], fsp.m_u.hdata[16:31])
+		rxclass_print_ipv6_rule(tcp_ip6_spec.ip6src,
+			tcp_ip6_mask.ip6src,
+			tcp_ip6_spec.ip6dst,
+			tcp_ip6_mask.ip6dst,
+			tcp_ip6_spec.tclass,
+			tcp_ip6_mask.tclass)
+		fmt.Printf(
+			"\tSrc port: %d mask: 0x%x\n"+
+				"\tDest port: %d mask: 0x%x\n",
+			tcp_ip6_spec.psrc,
+			tcp_ip6_mask.psrc,
+			tcp_ip6_spec.pdst,
+			tcp_ip6_mask.pdst)
 		break
 	case AH_V6_FLOW:
 	case ESP_V6_FLOW:
@@ -182,53 +237,87 @@ func rxclass_print_nfc_rule(fsp *ethtool_rx_flow_spec,
 		} else {
 			fmt.Printf("\tRule Type: IPSEC ESP over IPv6\n")
 		}
-		// rxclass_print_ipv6_rule(fsp.h_u.ah_ip6_spec.ip6src,
-		// 	fsp.m_u.ah_ip6_spec.ip6src,
-		// 	fsp.h_u.ah_ip6_spec.ip6dst,
-		// 	fsp.m_u.ah_ip6_spec.ip6dst,
-		// 	fsp.h_u.ah_ip6_spec.tclass,
-		// 	fsp.m_u.ah_ip6_spec.tclass)
-		// fmt.Printf(
-		// 	"\tSPI: %d mask: 0x%x\n",
-		// 	ntohl(fsp.h_u.esp_ip6_spec.spi),
-		// 	ntohl(fsp.m_u.esp_ip6_spec.spi))
+		ah_ip6_spec := ethtool_ah_espip6_spec{
+			spi:    binary.LittleEndian.Uint32(fsp.h_u.hdata[32:35]),
+			tclass: fsp.h_u.hdata[36],
+		}
+		copy(ah_ip6_spec.ip6src[:], fsp.h_u.hdata[0:15])
+		copy(ah_ip6_spec.ip6dst[:], fsp.h_u.hdata[16:31])
+		ah_ip6_mask := ethtool_ah_espip6_spec{
+
+			spi:    binary.LittleEndian.Uint32(fsp.m_u.hdata[32:35]),
+			tclass: fsp.m_u.hdata[36],
+		}
+		copy(ah_ip6_mask.ip6src[:], fsp.m_u.hdata[0:15])
+		copy(ah_ip6_mask.ip6dst[:], fsp.m_u.hdata[16:31])
+		rxclass_print_ipv6_rule(ah_ip6_spec.ip6src,
+			ah_ip6_mask.ip6src,
+			ah_ip6_spec.ip6dst,
+			ah_ip6_mask.ip6dst,
+			ah_ip6_spec.tclass,
+			ah_ip6_mask.tclass)
+		fmt.Printf("\tSPI: %d mask: 0x%x\n",
+			ah_ip6_spec.spi,
+			ah_ip6_mask.spi)
 		break
 	case IPV6_USER_FLOW:
 		fmt.Printf("\tRule Type: Raw IPv6\n")
-		// rxclass_print_ipv6_rule(fsp.h_u.usr_ip6_spec.ip6src,
-		// 	fsp.m_u.usr_ip6_spec.ip6src,
-		// 	fsp.h_u.usr_ip6_spec.ip6dst,
-		// 	fsp.m_u.usr_ip6_spec.ip6dst,
-		// 	fsp.h_u.usr_ip6_spec.tclass,
-		// 	fsp.m_u.usr_ip6_spec.tclass)
-		// fmt.Printf(
-		// 	"\tProtocol: %d mask: 0x%x\n"+
-		// 		"\tL4 bytes: 0x%x mask: 0x%x\n",
-		// 	fsp.h_u.usr_ip6_spec.l4_proto,
-		// 	fsp.m_u.usr_ip6_spec.l4_proto,
-		// 	ntohl(fsp.h_u.usr_ip6_spec.l4_4_bytes),
-		// 	ntohl(fsp.m_u.usr_ip6_spec.l4_4_bytes))
+		usr_ip6_spec := ethtool_usrip6_spec{
+
+			l4_4_bytes: binary.LittleEndian.Uint32(fsp.h_u.hdata[32:35]),
+			tclass:     fsp.h_u.hdata[36],
+			l4_proto:   fsp.h_u.hdata[37],
+		}
+		copy(usr_ip6_spec.ip6src[:], fsp.h_u.hdata[0:15])
+		copy(usr_ip6_spec.ip6dst[:], fsp.h_u.hdata[16:31])
+
+		usr_ip6_mask := ethtool_usrip6_spec{
+
+			l4_4_bytes: binary.LittleEndian.Uint32(fsp.m_u.hdata[32:35]),
+			tclass:     fsp.m_u.hdata[36],
+			l4_proto:   fsp.m_u.hdata[37],
+		}
+
+		copy(usr_ip6_mask.ip6src[:], fsp.m_u.hdata[0:15])
+		copy(usr_ip6_mask.ip6dst[:], fsp.m_u.hdata[16:31])
+		rxclass_print_ipv6_rule(usr_ip6_spec.ip6src,
+			usr_ip6_mask.ip6src,
+			usr_ip6_spec.ip6dst,
+			usr_ip6_mask.ip6dst,
+			usr_ip6_spec.tclass,
+			usr_ip6_mask.tclass)
+		fmt.Printf("\tProtocol: %d mask: 0x%x\n"+
+			"\tL4 bytes: 0x%x mask: 0x%x\n",
+			usr_ip6_spec.l4_proto,
+			usr_ip6_mask.l4_proto,
+			(usr_ip6_spec.l4_4_bytes),
+			(usr_ip6_mask.l4_4_bytes))
 		break
 	case ETHER_FLOW:
-		// dmac := fsp.h_u.ether_spec.h_dest
-		// dmacm := fsp.m_u.ether_spec.h_dest
-		// smac := fsp.h_u.ether_spec.h_source
-		// smacm := fsp.m_u.ether_spec.h_source
-
-		// fmt.Printf(
-		// 	"\tFlow Type: Raw Ethernet\n"+
-		// 		"\tSrc MAC addr: %02X:%02X:%02X:%02X:%02X:%02X"+
-		// 		" mask: %02X:%02X:%02X:%02X:%02X:%02X\n"+
-		// 		"\tDest MAC addr: %02X:%02X:%02X:%02X:%02X:%02X"+
-		// 		" mask: %02X:%02X:%02X:%02X:%02X:%02X\n"+
-		// 		"\tEthertype: 0x%X mask: 0x%X\n",
-		// 	smac[0], smac[1], smac[2], smac[3], smac[4], smac[5],
-		// 	smacm[0], smacm[1], smacm[2], smacm[3], smacm[4],
-		// 	smacm[5], dmac[0], dmac[1], dmac[2], dmac[3], dmac[4],
-		// 	dmac[5], dmacm[0], dmacm[1], dmacm[2], dmacm[3],
-		// 	dmacm[4], dmacm[5],
-		// 	ntohs(fsp.h_u.ether_spec.h_proto),
-		// 	ntohs(fsp.m_u.ether_spec.h_proto))
+		dmac := [6]byte{fsp.h_u.hdata[0], fsp.h_u.hdata[1], fsp.h_u.hdata[2],
+			fsp.h_u.hdata[3], fsp.h_u.hdata[4], fsp.h_u.hdata[5]}
+		dmacm := [6]byte{fsp.m_u.hdata[0], fsp.m_u.hdata[1], fsp.m_u.hdata[2],
+			fsp.m_u.hdata[3], fsp.m_u.hdata[4], fsp.h_u.hdata[5]}
+		smac := [6]byte{fsp.h_u.hdata[6], fsp.h_u.hdata[7], fsp.h_u.hdata[8],
+			fsp.h_u.hdata[9], fsp.h_u.hdata[10], fsp.h_u.hdata[11]}
+		smacm := [6]byte{fsp.m_u.hdata[6], fsp.m_u.hdata[7], fsp.m_u.hdata[8],
+			fsp.m_u.hdata[9], fsp.m_u.hdata[10], fsp.m_u.hdata[11]}
+		proto := binary.LittleEndian.Uint32(fsp.h_u.hdata[12:13])
+		protom := binary.LittleEndian.Uint32(fsp.m_u.hdata[12:13])
+		fmt.Printf(
+			"\tFlow Type: Raw Ethernet\n"+
+				"\tSrc MAC addr: %02X:%02X:%02X:%02X:%02X:%02X"+
+				" mask: %02X:%02X:%02X:%02X:%02X:%02X\n"+
+				"\tDest MAC addr: %02X:%02X:%02X:%02X:%02X:%02X"+
+				" mask: %02X:%02X:%02X:%02X:%02X:%02X\n"+
+				"\tEthertype: 0x%X mask: 0x%X\n",
+			smac[0], smac[1], smac[2], smac[3], smac[4], smac[5],
+			smacm[0], smacm[1], smacm[2], smacm[3], smacm[4],
+			smacm[5], dmac[0], dmac[1], dmac[2], dmac[3], dmac[4],
+			dmac[5], dmacm[0], dmacm[1], dmacm[2], dmacm[3],
+			dmacm[4], dmacm[5],
+			proto,
+			protom)
 		break
 	default:
 		fmt.Printf("\tUnknown Flow type: %d\n", flow_type)
@@ -245,20 +334,19 @@ func rxclass_print_nfc_rule(fsp *ethtool_rx_flow_spec,
 	} else if fsp.ring_cookie == RX_CLS_FLOW_WAKE {
 		fmt.Printf("\tAction: Wake-on-LAN\n")
 	} else {
-		// vf := ethtool_get_flow_spec_ring_vf(fsp.ring_cookie)
-		// queue := ethtool_get_flow_spec_ring(fsp.ring_cookie)
+		vf := ethtool_get_flow_spec_ring_vf(fsp.ring_cookie)
+		queue := ethtool_get_flow_spec_ring(fsp.ring_cookie)
 
-		// /* A value of zero indicates that this rule targeted the main
-		//  * function. A positive value indicates which virtual function
-		//  * was targeted, so we'll subtract 1 in order to show the
-		//  * correct VF index
-		//  */
-		// if vf {
-		// 	fmt.Printf("\tAction: Direct to VF %lld queue %llu\n",
-		// 		vf-1, queue)
-		// } else {
-		// 	fmt.Printf("\tAction: Direct to queue %lld\n", queue)
-		// }
+		/* A value of zero indicates that this rule targeted the main
+		 * function. A positive value indicates which virtual function
+		 * was targeted, so we'll subtract 1 in order to show the
+		 * correct VF index
+		 */
+		if vf != 0 {
+			fmt.Printf("\tAction: Direct to VF %d queue %d\n", vf-1, queue)
+		} else {
+			fmt.Printf("\tAction: Direct to queue %d\n", queue)
+		}
 	}
 
 	fmt.Printf("\n")
@@ -282,11 +370,19 @@ func rxclass_print_rule(fsp *ethtool_rx_flow_spec, rss_context uint32) {
 		rxclass_print_nfc_rule(fsp, rss_context)
 		break
 	case IPV4_USER_FLOW:
-		// if fsp.h_u.usr_ip4_spec.ip_ver == ETH_RX_NFC_IP4 {
-		// 	rxclass_print_nfc_rule(fsp, rss_context)
-		// } else { /* IPv6 uses IPV6_USER_FLOW */
-		// 	fmt.Printf("IPV4_USER_FLOW with wrong ip_ver\n")
-		// }
+		usr_ip4_spec := ethtool_usrip4_spec{
+			ip4src:     binary.LittleEndian.Uint32(fsp.h_u.hdata[0:3]),
+			ip4dst:     binary.LittleEndian.Uint32(fsp.h_u.hdata[4:7]),
+			l4_4_bytes: binary.LittleEndian.Uint32(fsp.h_u.hdata[8:11]),
+			tos:        fsp.h_u.hdata[12],
+			ip_ver:     fsp.h_u.hdata[13],
+			proto:      fsp.h_u.hdata[14],
+		}
+		if usr_ip4_spec.ip_ver == ETH_RX_NFC_IP4 {
+			rxclass_print_nfc_rule(fsp, rss_context)
+		} else { /* IPv6 uses IPV6_USER_FLOW */
+			fmt.Printf("IPV4_USER_FLOW with wrong ip_ver\n")
+		}
 		break
 	default:
 		fmt.Printf("rxclass: Unknown flow type\n")
