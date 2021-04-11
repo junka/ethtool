@@ -213,13 +213,10 @@ func dump_mdix(mdix uint8, mdix_ctrl uint8) {
 		switch mdix {
 		case ETH_TP_MDI:
 			fmt.Printf("off")
-			break
 		case ETH_TP_MDI_X:
 			fmt.Printf("on")
-			break
 		default:
 			fmt.Printf("Unknown")
-			break
 		}
 		if mdix_ctrl == ETH_TP_MDI_AUTO {
 			fmt.Printf(" (auto)")

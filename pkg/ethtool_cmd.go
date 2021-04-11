@@ -100,91 +100,71 @@ func parse_generic_cmdline(ctx *cmd_context,
 
 				switch info[idx].tp {
 				case CMDL_BOOL:
-					{
-						p := (*uint32)(unsafe.Pointer(info[idx].wanted_val))
-						if argp[i] == "on" {
-							*p = 1
-						} else if argp[i] == "off" {
-							*p = 0
-						} else {
-							return -1
-						}
-						break
+					p := (*uint32)(unsafe.Pointer(info[idx].wanted_val))
+					if argp[i] == "on" {
+						*p = 1
+					} else if argp[i] == "off" {
+						*p = 0
+					} else {
+						return -1
 					}
+
 				case CMDL_S32:
-					{
-						p := (*int32)(unsafe.Pointer(info[idx].wanted_val))
-						val, _ := strconv.ParseInt(argp[i], 10, 32)
-						*p = int32(val)
-						break
-					}
+					p := (*int32)(unsafe.Pointer(info[idx].wanted_val))
+					val, _ := strconv.ParseInt(argp[i], 10, 32)
+					*p = int32(val)
+
 				case CMDL_U8:
-					{
-						p := (*uint8)(unsafe.Pointer(info[idx].wanted_val))
-						val, _ := strconv.ParseUint(argp[i], 10, 8)
-						*p = uint8(val)
-						break
-					}
+					p := (*uint8)(unsafe.Pointer(info[idx].wanted_val))
+					val, _ := strconv.ParseUint(argp[i], 10, 8)
+					*p = uint8(val)
+
 				case CMDL_U16:
-					{
-						p := (*uint16)(unsafe.Pointer(info[idx].wanted_val))
-						val, _ := strconv.ParseUint(argp[i], 10, 16)
-						*p = uint16(val)
-						break
-					}
+					p := (*uint16)(unsafe.Pointer(info[idx].wanted_val))
+					val, _ := strconv.ParseUint(argp[i], 10, 16)
+					*p = uint16(val)
+
 				case CMDL_U32:
-					{
-						p := (*uint32)(unsafe.Pointer(info[idx].wanted_val))
-						val, _ := strconv.ParseUint(argp[i], 10, 32)
-						*p = uint32(val)
-						break
-					}
+					p := (*uint32)(unsafe.Pointer(info[idx].wanted_val))
+					val, _ := strconv.ParseUint(argp[i], 10, 32)
+					*p = uint32(val)
+
 				case CMDL_U64:
-					{
-						p := (*uint64)(unsafe.Pointer(info[idx].wanted_val))
-						*p, _ = strconv.ParseUint(argp[i], 10, 64)
-						break
-					}
+					p := (*uint64)(unsafe.Pointer(info[idx].wanted_val))
+					*p, _ = strconv.ParseUint(argp[i], 10, 64)
+
 				case CMDL_BE16:
-					{
-						p := (*int16)(unsafe.Pointer(info[idx].wanted_val))
-						val, _ := strconv.ParseUint(argp[i], 10, 16)
-						*p = int16(val)
-						break
-					}
+					p := (*int16)(unsafe.Pointer(info[idx].wanted_val))
+					val, _ := strconv.ParseUint(argp[i], 10, 16)
+					*p = int16(val)
+
 				case CMDL_IP4:
-					{
-						p := (*uint32)(unsafe.Pointer(info[idx].wanted_val))
-						addr := net.ParseIP(argp[i])
-						// if (!inet_aton(argp[i], &in)){
-						// 	exit_bad_args();
-						// }
-						*p = IPToUInt32(addr)
-						break
-					}
+					p := (*uint32)(unsafe.Pointer(info[idx].wanted_val))
+					addr := net.ParseIP(argp[i])
+					// if (!inet_aton(argp[i], &in)){
+					// 	exit_bad_args();
+					// }
+					*p = IPToUInt32(addr)
+
 				// case CMDL_MAC:
 				// 	get_mac_addr(argp[i],
 				// 		info[idx].wanted_val)
-				// 	break
+
 				case CMDL_FLAG:
-					{
-						p := (*uint32)(unsafe.Pointer(info[idx].seen_val))
+					p := (*uint32)(unsafe.Pointer(info[idx].seen_val))
+					*p |= info[idx].flag_val
+					if argp[i] == "on" {
+						p = (*uint32)(unsafe.Pointer((info[idx].wanted_val)))
 						*p |= info[idx].flag_val
-						if argp[i] == "on" {
-							p = (*uint32)(unsafe.Pointer((info[idx].wanted_val)))
-							*p |= info[idx].flag_val
-						} else if argp[i] == "off" {
-							// exit_bad_args()
-							return -1
-						}
-						break
+					} else if argp[i] == "off" {
+						// exit_bad_args()
+						return -1
 					}
+
 				case CMDL_STR:
-					{
-						s := (*[]byte)(unsafe.Pointer(info[idx].wanted_val))
-						copy(*s, (argp[i]))
-						break
-					}
+					s := (*[]byte)(unsafe.Pointer(info[idx].wanted_val))
+					copy(*s, (argp[i]))
+
 				default:
 					// exit_bad_args()
 					return -1
@@ -695,34 +675,38 @@ func dump_rxfhash(fhash int, val uint64) int {
 	switch fhash & ^FLOW_RSS {
 	case TCP_V4_FLOW:
 		fmt.Printf("TCP over IPV4 flows")
-		break
+
 	case UDP_V4_FLOW:
 		fmt.Printf("UDP over IPV4 flows")
-		break
+
 	case SCTP_V4_FLOW:
 		fmt.Printf("SCTP over IPV4 flows")
-		break
+
 	case AH_ESP_V4_FLOW:
+		fallthrough
 	case AH_V4_FLOW:
+		fallthrough
 	case ESP_V4_FLOW:
 		fmt.Printf("IPSEC AH/ESP over IPV4 flows")
-		break
+
 	case TCP_V6_FLOW:
 		fmt.Printf("TCP over IPV6 flows")
-		break
+
 	case UDP_V6_FLOW:
 		fmt.Printf("UDP over IPV6 flows")
-		break
+
 	case SCTP_V6_FLOW:
 		fmt.Printf("SCTP over IPV6 flows")
-		break
+
 	case AH_ESP_V6_FLOW:
+		fallthrough
 	case AH_V6_FLOW:
+		fallthrough
 	case ESP_V6_FLOW:
 		fmt.Printf("IPSEC AH/ESP over IPV6 flows")
-		break
+
 	default:
-		break
+
 	}
 
 	if val&RXH_DISCARD != 0 {
@@ -1885,9 +1869,13 @@ func do_getmodule(ctx *cmd_context) int {
 		} else if geeprom_dump_hex == 0 {
 			switch modinfo.tp {
 			case ETH_MODULE_SFF_8079:
+				fallthrough
 			case ETH_MODULE_SFF_8472:
+				fallthrough
 			case ETH_MODULE_SFF_8436:
+				fallthrough
 			case ETH_MODULE_SFF_8636:
+				fallthrough
 
 			default:
 				geeprom_dump_hex = 1
@@ -2144,8 +2132,6 @@ func Do_actions() int {
 		return -1
 	}
 	args := flag.Args()
-	ctx.argc = len(args) - 1
-	ctx.argp = args[1:]
 	if no_dev == true {
 		if len(args) == 0 {
 			fmt.Printf("ethtool: bad command line argument(s)\n" +
@@ -2153,6 +2139,10 @@ func Do_actions() int {
 			return -1
 		}
 		ctx.devname = args[0]
+	}
+	if len(args) > 1 {
+		ctx.argc = len(args) - 1
+		ctx.argp = args[1:]
 	}
 	if opt_args[i].ioctlfunc == nil {
 		fmt.Printf("Function not supported yet\n")

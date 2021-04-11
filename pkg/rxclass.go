@@ -93,7 +93,9 @@ func rxclass_print_nfc_rule(fsp *ethtool_rx_flow_spec,
 
 	switch flow_type {
 	case TCP_V4_FLOW:
+		fallthrough
 	case UDP_V4_FLOW:
+		fallthrough
 	case SCTP_V4_FLOW:
 		if flow_type == TCP_V4_FLOW {
 			fmt.Printf("\tRule Type: TCP over IPv4\n")
@@ -129,8 +131,9 @@ func rxclass_print_nfc_rule(fsp *ethtool_rx_flow_spec,
 			tcp_ip4_mask.psrc,
 			tcp_ip4_spec.pdst,
 			tcp_ip4_mask.pdst)
-		break
+
 	case AH_V4_FLOW:
+		fallthrough
 	case ESP_V4_FLOW:
 		if flow_type == AH_V4_FLOW {
 			fmt.Printf("\tRule Type: IPSEC AH over IPv4\n")
@@ -159,7 +162,7 @@ func rxclass_print_nfc_rule(fsp *ethtool_rx_flow_spec,
 		fmt.Printf("\tSPI: %d mask: 0x%x\n",
 			ah_ip4_spec.spi,
 			ah_ip4_mask.spi)
-		break
+
 	case IPV4_USER_FLOW:
 		fmt.Printf("\tRule Type: Raw IPv4\n")
 		usr_ip4_spec := ethtool_usrip4_spec{
@@ -191,9 +194,11 @@ func rxclass_print_nfc_rule(fsp *ethtool_rx_flow_spec,
 			usr_ip4_mask.proto,
 			usr_ip4_spec.l4_4_bytes,
 			usr_ip4_mask.l4_4_bytes)
-		break
+
 	case TCP_V6_FLOW:
+		fallthrough
 	case UDP_V6_FLOW:
+		fallthrough
 	case SCTP_V6_FLOW:
 		if flow_type == TCP_V6_FLOW {
 			fmt.Printf("\tRule Type: TCP over IPv6\n")
@@ -229,8 +234,9 @@ func rxclass_print_nfc_rule(fsp *ethtool_rx_flow_spec,
 			tcp_ip6_mask.psrc,
 			tcp_ip6_spec.pdst,
 			tcp_ip6_mask.pdst)
-		break
+
 	case AH_V6_FLOW:
+		fallthrough
 	case ESP_V6_FLOW:
 		if flow_type == AH_V6_FLOW {
 			fmt.Printf("\tRule Type: IPSEC AH over IPv6\n")
@@ -259,7 +265,7 @@ func rxclass_print_nfc_rule(fsp *ethtool_rx_flow_spec,
 		fmt.Printf("\tSPI: %d mask: 0x%x\n",
 			ah_ip6_spec.spi,
 			ah_ip6_mask.spi)
-		break
+
 	case IPV6_USER_FLOW:
 		fmt.Printf("\tRule Type: Raw IPv6\n")
 		usr_ip6_spec := ethtool_usrip6_spec{
@@ -292,7 +298,7 @@ func rxclass_print_nfc_rule(fsp *ethtool_rx_flow_spec,
 			usr_ip6_mask.l4_proto,
 			(usr_ip6_spec.l4_4_bytes),
 			(usr_ip6_mask.l4_4_bytes))
-		break
+
 	case ETHER_FLOW:
 		dmac := [6]byte{fsp.h_u.hdata[0], fsp.h_u.hdata[1], fsp.h_u.hdata[2],
 			fsp.h_u.hdata[3], fsp.h_u.hdata[4], fsp.h_u.hdata[5]}
@@ -318,10 +324,10 @@ func rxclass_print_nfc_rule(fsp *ethtool_rx_flow_spec,
 			dmacm[4], dmacm[5],
 			proto,
 			protom)
-		break
+
 	default:
 		fmt.Printf("\tUnknown Flow type: %d\n", flow_type)
-		break
+
 	}
 
 	rxclass_print_nfc_spec_ext(fsp)
@@ -356,19 +362,30 @@ func rxclass_print_rule(fsp *ethtool_rx_flow_spec, rss_context uint32) {
 	/* print the rule in this location */
 	switch fsp.flow_type & ^(uint32(FLOW_EXT) | FLOW_MAC_EXT | FLOW_RSS) {
 	case TCP_V4_FLOW:
+		fallthrough
 	case UDP_V4_FLOW:
+		fallthrough
 	case SCTP_V4_FLOW:
+		fallthrough
 	case AH_V4_FLOW:
+		fallthrough
 	case ESP_V4_FLOW:
+		fallthrough
 	case TCP_V6_FLOW:
+		fallthrough
 	case UDP_V6_FLOW:
+		fallthrough
 	case SCTP_V6_FLOW:
+		fallthrough
 	case AH_V6_FLOW:
+		fallthrough
 	case ESP_V6_FLOW:
+		fallthrough
 	case IPV6_USER_FLOW:
+		fallthrough
 	case ETHER_FLOW:
 		rxclass_print_nfc_rule(fsp, rss_context)
-		break
+
 	case IPV4_USER_FLOW:
 		usr_ip4_spec := ethtool_usrip4_spec{
 			ip4src:     binary.LittleEndian.Uint32(fsp.h_u.hdata[0:3]),
@@ -383,10 +400,9 @@ func rxclass_print_rule(fsp *ethtool_rx_flow_spec, rss_context uint32) {
 		} else { /* IPv6 uses IPV6_USER_FLOW */
 			fmt.Printf("IPV4_USER_FLOW with wrong ip_ver\n")
 		}
-		break
+
 	default:
 		fmt.Printf("rxclass: Unknown flow type\n")
-		break
 	}
 }
 
