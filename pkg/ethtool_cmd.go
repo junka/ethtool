@@ -78,29 +78,29 @@ func IPToUInt32(ipnr net.IP) uint32 {
 
 func parse_generic_cmdline(ctx *cmd_context,
 	changed *int,
-	info []cmdline_info,
-	n_info int) int {
+	info *[]cmdline_info,
+) int {
 	argc := ctx.argc
 	argp := ctx.argp
 
 	for i := 0; i < argc; i++ {
 		found := 0
-		for idx := 0; idx < n_info; idx++ {
-			if info[idx].name == argp[i] {
+		for idx := 0; idx < len(*info); idx++ {
+			if (*info)[idx].name == argp[i] {
 				found = 1
 				*changed = 1
-				if info[idx].tp != CMDL_FLAG &&
-					info[idx].seen_val != 0 {
-					*(*uint32)(unsafe.Pointer(info[idx].seen_val)) = 1
+				if (*info)[idx].tp != CMDL_FLAG &&
+					(*info)[idx].seen_val != 0 {
+					*(*uint32)(unsafe.Pointer((*info)[idx].seen_val)) = 1
 				}
 				i += 1
 				if i >= argc {
 					return -1
 				}
 
-				switch info[idx].tp {
+				switch (*info)[idx].tp {
 				case CMDL_BOOL:
-					p := (*uint32)(unsafe.Pointer(info[idx].wanted_val))
+					p := (*int)(unsafe.Pointer((*info)[idx].wanted_val))
 					if argp[i] == "on" {
 						*p = 1
 					} else if argp[i] == "off" {
@@ -110,36 +110,36 @@ func parse_generic_cmdline(ctx *cmd_context,
 					}
 
 				case CMDL_S32:
-					p := (*int32)(unsafe.Pointer(info[idx].wanted_val))
+					p := (*int32)(unsafe.Pointer((*info)[idx].wanted_val))
 					val, _ := strconv.ParseInt(argp[i], 10, 32)
 					*p = int32(val)
 
 				case CMDL_U8:
-					p := (*uint8)(unsafe.Pointer(info[idx].wanted_val))
+					p := (*uint8)(unsafe.Pointer((*info)[idx].wanted_val))
 					val, _ := strconv.ParseUint(argp[i], 10, 8)
 					*p = uint8(val)
 
 				case CMDL_U16:
-					p := (*uint16)(unsafe.Pointer(info[idx].wanted_val))
+					p := (*uint16)(unsafe.Pointer((*info)[idx].wanted_val))
 					val, _ := strconv.ParseUint(argp[i], 10, 16)
 					*p = uint16(val)
 
 				case CMDL_U32:
-					p := (*uint32)(unsafe.Pointer(info[idx].wanted_val))
+					p := (*uint32)(unsafe.Pointer((*info)[idx].wanted_val))
 					val, _ := strconv.ParseUint(argp[i], 10, 32)
 					*p = uint32(val)
 
 				case CMDL_U64:
-					p := (*uint64)(unsafe.Pointer(info[idx].wanted_val))
+					p := (*uint64)(unsafe.Pointer((*info)[idx].wanted_val))
 					*p, _ = strconv.ParseUint(argp[i], 10, 64)
 
 				case CMDL_BE16:
-					p := (*int16)(unsafe.Pointer(info[idx].wanted_val))
+					p := (*int16)(unsafe.Pointer((*info)[idx].wanted_val))
 					val, _ := strconv.ParseUint(argp[i], 10, 16)
 					*p = int16(val)
 
 				case CMDL_IP4:
-					p := (*uint32)(unsafe.Pointer(info[idx].wanted_val))
+					p := (*uint32)(unsafe.Pointer((*info)[idx].wanted_val))
 					addr := net.ParseIP(argp[i])
 					// if (!inet_aton(argp[i], &in)){
 					// 	exit_bad_args();
@@ -151,18 +151,18 @@ func parse_generic_cmdline(ctx *cmd_context,
 				// 		info[idx].wanted_val)
 
 				case CMDL_FLAG:
-					p := (*uint32)(unsafe.Pointer(info[idx].seen_val))
-					*p |= info[idx].flag_val
+					p := (*uint32)(unsafe.Pointer((*info)[idx].seen_val))
+					*p |= (*info)[idx].flag_val
 					if argp[i] == "on" {
-						p = (*uint32)(unsafe.Pointer((info[idx].wanted_val)))
-						*p |= info[idx].flag_val
+						p = (*uint32)(unsafe.Pointer(((*info)[idx].wanted_val)))
+						*p |= (*info)[idx].flag_val
 					} else if argp[i] == "off" {
 						// exit_bad_args()
 						return -1
 					}
 
 				case CMDL_STR:
-					s := (*[]byte)(unsafe.Pointer(info[idx].wanted_val))
+					s := (*[]byte)(unsafe.Pointer((*info)[idx].wanted_val))
 					copy(*s, (argp[i]))
 
 				default:
@@ -945,6 +945,24 @@ func do_gpause(ctx *cmd_context) int {
 	return 0
 }
 
+func do_generic_set(info *[]cmdline_info, changed *int) {
+	for i := 0; i < len(*info); i++ {
+		v1 := (*info)[i].wanted_val
+		wanted := *(*int32)(unsafe.Pointer(v1))
+		if wanted < 0 {
+			continue
+		}
+		v2 := (*info)[i].ioctl_val
+		if *(*uint32)(unsafe.Pointer(v2)) == uint32(wanted) {
+			fmt.Printf("%s unmodified, ignoring\n", (*info)[i].name)
+		} else {
+			*(*uint32)(unsafe.Pointer(v2)) = uint32(wanted)
+			*changed = 1
+		}
+
+	}
+}
+
 func do_spause(ctx *cmd_context) int {
 	var epause ethtool_pauseparam
 	gpause_changed := 0
@@ -973,12 +991,11 @@ func do_spause(ctx *cmd_context) int {
 	}
 	changed := 0
 
-	ret := parse_generic_cmdline(ctx, &gpause_changed, cmdline_pause, len(cmdline_pause))
+	ret := parse_generic_cmdline(ctx, &gpause_changed, &cmdline_pause)
 	if ret != 0 {
 		fmt.Printf("Parse cmdline args error\n")
 		return -1
 	}
-
 	epause.cmd = ETHTOOL_GPAUSEPARAM
 	err := send_ioctl(ctx, uintptr(unsafe.Pointer(&epause)))
 	if err != nil {
@@ -986,7 +1003,7 @@ func do_spause(ctx *cmd_context) int {
 		return 77
 	}
 
-	// do_generic_set(cmdline_pause, len(cmdline_pause), &changed)
+	do_generic_set(&cmdline_pause, &changed)
 
 	if changed == 0 {
 		fmt.Printf("no pause parameters changed, aborting\n")
@@ -1169,6 +1186,69 @@ func do_gfeatures(ctx *cmd_context) int {
 	dump_features(defs, features, nil)
 
 	return 0
+}
+
+func do_sring(ctx *cmd_context) int {
+
+	var ering ethtool_ringparam
+	gring_changed := 0
+	ring_rx_wanted := int32(-1)
+	ring_rx_mini_wanted := int32(-1)
+	ring_rx_jumbo_wanted := int32(-1)
+	ring_tx_wanted := int32(-1)
+	cmdline_ring := []cmdline_info{
+		{
+			name:       "rx",
+			tp:         CMDL_S32,
+			wanted_val: uintptr(unsafe.Pointer(&ring_rx_wanted)),
+			ioctl_val:  uintptr(unsafe.Pointer(&ering.rx_pending)),
+		},
+		{
+			name:       "rx-mini",
+			tp:         CMDL_S32,
+			wanted_val: uintptr(unsafe.Pointer(&ring_rx_mini_wanted)),
+			ioctl_val:  uintptr(unsafe.Pointer(&ering.rx_mini_pending)),
+		},
+		{
+			name:       "rx-jumbo",
+			tp:         CMDL_S32,
+			wanted_val: uintptr(unsafe.Pointer(&ring_rx_jumbo_wanted)),
+			ioctl_val:  uintptr(unsafe.Pointer(&ering.rx_jumbo_pending)),
+		},
+		{
+			name:       "tx",
+			tp:         CMDL_S32,
+			wanted_val: uintptr(unsafe.Pointer(&ring_tx_wanted)),
+			ioctl_val:  uintptr(unsafe.Pointer(&ering.tx_pending)),
+		},
+	}
+	changed := 0
+
+	parse_generic_cmdline(ctx, &gring_changed, &cmdline_ring)
+
+	ering.cmd = ETHTOOL_GRINGPARAM
+	err := send_ioctl(ctx, uintptr(unsafe.Pointer(&ering)))
+	if err != nil {
+		fmt.Printf("Cannot get device ring settings: %v\n", err)
+		return 76
+	}
+
+	do_generic_set(&cmdline_ring, &changed)
+
+	if changed == 0 {
+		fmt.Printf("no ring parameters changed, aborting\n")
+		return 80
+	}
+
+	ering.cmd = ETHTOOL_SRINGPARAM
+	err = send_ioctl(ctx, uintptr(unsafe.Pointer(&ering)))
+	if err != nil {
+		fmt.Printf("Cannot set device ring parameters: %v\n", err)
+		return 81
+	}
+
+	return 0
+
 }
 
 func do_gring(ctx *cmd_context) int {
@@ -1961,7 +2041,7 @@ var (
 			"		[sample-interval N]\n"},
 		{flag.Bool("g", false, "Query RX/TX ring parameters"), true, do_gring, nil, ""},
 
-		{flag.Bool("G", false, "Set RX/TX ring parameters"), true, nil, nil, "		[ rx N ]\n" +
+		{flag.Bool("G", false, "Set RX/TX ring parameters"), true, do_sring, nil, "		[ rx N ]\n" +
 			"		[ rx-mini N ]\n" +
 			"		[ rx-jumbo N ]\n" +
 			"		[ tx N ]\n"},
