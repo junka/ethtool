@@ -56,7 +56,7 @@ type feature_defs struct {
 	/* Number of features each offload flag is associated with */
 	off_flag_matched [OFF_FLAG_DEF_SIZE]uint64
 	/* Name and offload flag index for each feature */
-	def [0]feature_def
+	def [1024]feature_def
 }
 
 func IPToUInt32(ipnr net.IP) uint32 {
@@ -531,7 +531,6 @@ func dump_coalesce(ecoal *ethtool_coalesce) int {
 func dump_per_queue_coalesce(per_queue_opt *ethtool_per_queue_op,
 	queue_mask *uint32, n_queues int) {
 	// struct ethtool_coalesce *ecoal;
-	// int i, idx = 0;
 
 	// ecoal = (struct ethtool_coalesce *)(per_queue_opt + 1);
 	// for (i = 0; i < __KERNEL_DIV_ROUND_UP(MAX_NUM_QUEUE, 32); i++) {
@@ -561,25 +560,30 @@ func dump_one_feature(indent string, name string,
 	state *feature_state,
 	ref_state *feature_state,
 	index uint32) {
-	// if (ref_state &&
-	// 	!(FEATURE_BIT_IS_SET(state.features.features, index, active) ^
-	// 	FEATURE_BIT_IS_SET(ref_state.features.features, index, active))){
-	// 	return;
-	// }
 
-	// fmt.Printf("%s%s: %s%s\n",
-	// indent, name,
-	// FEATURE_BIT_IS_SET(state.features.features, index, active) ?
-	// "on" : "off",
-	// (!FEATURE_BIT_IS_SET(state.features.features, index, available)
-	// || FEATURE_BIT_IS_SET(state.features.features, index,
-	// 		 never_changed))
-	// ? " [fixed]"
-	// : (FEATURE_BIT_IS_SET(state.features.features, index, requested)
-	// ^ FEATURE_BIT_IS_SET(state.features.features, index, active))
-	// ? (FEATURE_BIT_IS_SET(state.features.features, index, requested)
-	// ? " [requested on]" : " [requested off]")
-	// : "");
+	v := state.features.features[index/32].active & (1 << (index % 32))
+	rv := ref_state.features.features[index/32].active & (1 << (index % 32))
+	if ref_state != nil && (v^rv) == 0 {
+		return
+	}
+	active_str := "off"
+	if state.features.features[index/32].active > 0 {
+		active_str = "on"
+	}
+	change_str := ""
+	if (state.features.features[index/32].available == 0) ||
+		(state.features.features[index/32].never_changed != 0) {
+		change_str = "[fixed]"
+	} else if state.features.features[index/32].requested^
+		state.features.features[index/32].active > 0 {
+		if state.features.features[index/32].requested > 0 {
+			change_str = " [requested on]"
+		} else {
+			change_str = " [requested off]"
+		}
+
+	}
+	fmt.Printf("%s%s: %s%s\n", indent, name, active_str, change_str)
 }
 
 func linux_version_code() uint32 {
@@ -1033,17 +1037,14 @@ func do_gcoalesce(ctx *cmd_context) int {
 	return 0
 }
 
-func get_features(ctx *cmd_context, defs *feature_defs) *feature_state {
+func get_features(ctx *cmd_context, defs *feature_defs) feature_state {
 
 	var eval ethtool_value
 	allfail := 1
 
-	state := &feature_state{}
-	// malloc(sizeof(*state) +
-	// 	       FEATURE_BITS_TO_BLOCKS(defs.n_features) *
-	// 	       sizeof(state.features.features[0]));
-
-	state.off_flags = 0
+	state := feature_state{
+		off_flags: 0,
+	}
 
 	for i := 0; i < OFF_FLAG_DEF_SIZE; i++ {
 		value := off_flag_def[i].value
@@ -1089,98 +1090,113 @@ func get_features(ctx *cmd_context, defs *feature_defs) *feature_state {
 	}
 
 	if allfail != 0 {
-		return nil
+		return feature_state{off_flags: 0}
 	}
 
 	return state
 }
-func get_feature_defs(ctx *cmd_context) *feature_defs {
+func get_feature_defs(ctx *cmd_context) feature_defs {
 
-	defs := &feature_defs{}
-	// var n_features uint32
+	n_features := uint32(0)
 
-	// names := get_stringset(ctx, ETH_SS_FEATURES, 0, 1);
-	// if names!=nil {
-	// 	n_features = names.len;
-	// } else if (errno == EOPNOTSUPP || errno == EINVAL) {
-	// 	/* Kernel doesn't support named features; not an error */
-	// 	n_features = 0;
-	// } else if (errno == EPERM) {
-	// 	/* Kernel bug: ETHTOOL_GSSET_INFO was privileged.
-	// 	 * Work around it. */
-	// 	n_features = 0;
-	// } else {
-	// 	return NULL;
-	// }
+	names := get_stringset(ctx, ETH_SS_FEATURES, 0, 1)
+	if names != nil {
+		n_features = names.len
+		// } else if errno == syscall.EOPNOTSUPP || errno == syscall.EINVAL {
+		// 	/* Kernel doesn't support named features; not an error */
+		// 	n_features = 0
+		// } else if errno == EPERM {
+		// 	/* Kernel bug: ETHTOOL_GSSET_INFO was privileged.
+		// 	 * Work around it. */
+		// 	n_features = 0
+	} else {
+		n_features = 0
+	}
 
-	// if (!defs) {
-	// 	return NULL;
-	// }
+	defs := feature_defs{
+		n_features: uint64(n_features),
+	}
 
-	// defs.n_features = n_features;
-	// // memset(defs.off_flag_matched, 0, sizeof(defs.off_flag_matched));
+	/* Copy out feature names and find those associated with legacy flags */
+	for i := uint64(0); i < defs.n_features; i++ {
+		copy((defs.def[i].name[:]), string(names.data[i*ETH_GSTRING_LEN:(i+1)*ETH_GSTRING_LEN]))
+		// fmt.Print(string(defs.def[i].name[:]))
+		defs.def[i].off_flag_index = -1
 
-	// /* Copy out feature names and find those associated with legacy flags */
-	// for i := 0; i < defs.n_features; i++ {
-	// 	memcpy(defs.def[i].name, names.data + i * ETH_GSTRING_LEN,
-	// 	       ETH_GSTRING_LEN);
-	// 	defs.def[i].off_flag_index = -1;
+		for j := 0; j < OFF_FLAG_DEF_SIZE &&
+			defs.def[i].off_flag_index < 0; j++ {
+			pattern := []byte(off_flag_def[j].kernel_name)
+			name := defs.def[i].name[:]
+			fmt.Printf("pattern %s\n", string(pattern))
+			fmt.Printf("name %s\n", string(name))
+			ori_nlen := len(string(name[:]))
+			ori_patlen := len(string(pattern[:]))
 
-	// 	for j = 0;
-	// 	     j < OFF_FLAG_DEF_SIZE &&
-	// 		     defs.def[i].off_flag_index < 0;
-	// 	     j++ {
-	// 		const char *pattern =
-	// 			off_flag_def[j].kernel_name;
-	// 		const char *name = defs.def[i].name;
-	// 		for (;;) {
-	// 			if (*pattern == '*') {
-	// 				/* There is only one wildcard; so
-	// 				 * switch to a suffix comparison */
-	// 				size_t pattern_len =
-	// 					strlen(pattern + 1);
-	// 				size_t name_len = strlen(name);
-	// 				if (name_len < pattern_len)
-	// 					break; /* name is too short */
-	// 				name += name_len - pattern_len;
-	// 				++pattern;
-	// 			} else if (*pattern != *name) {
-	// 				break; /* mismatch */
-	// 			} else if (*pattern == 0) {
-	// 				defs.def[i].off_flag_index = j;
-	// 				defs.off_flag_matched[j]++;
-	// 				break;
-	// 			} else {
-	// 				++name;
-	// 				++pattern;
-	// 			}
-	// 		}
-	// 	}
-	// }
+			for k, m := 0, 0; ; {
+				if k >= ori_patlen && m >= ori_nlen {
+					defs.def[i].off_flag_index = j
+					defs.off_flag_matched[j]++
+					break
+				}
+				if pattern[k] == '*' {
+					/* There is only one wildcard; so
+					 * switch to a suffix comparison */
+					if k == ori_patlen {
+						defs.def[i].off_flag_index = j
+						defs.off_flag_matched[j]++
+						break
+					}
+					name_len := 0
+					if m <= ori_nlen {
+						break
+					}
+
+					pattern_len := len(string(pattern[k+1:]))
+
+					if name_len < pattern_len {
+						break /* name is too short */
+					}
+					m += name_len - pattern_len
+					k++
+				} else if pattern[k] != name[m] {
+					break /* mismatch */
+				} else if pattern[k] == 0 {
+					defs.def[i].off_flag_index = j
+					defs.off_flag_matched[j]++
+					break
+				} else {
+					m++
+					k++
+				}
+			}
+		}
+	}
 
 	return defs
 }
 
 func do_gfeatures(ctx *cmd_context) int {
 
-	// if (ctx.argc != 0)
-	// 	return -1();
+	if ctx.argc != 0 {
+		return -1
+	}
 
 	defs := get_feature_defs(ctx)
-	if defs == nil {
+	if defs.n_features == 0 {
 		fmt.Printf("Cannot get device feature names\n")
 		return 1
 	}
 
 	fmt.Printf("Features for %s:\n", ctx.devname)
+	fmt.Print(defs)
 
-	features := get_features(ctx, defs)
-	if features == nil {
+	features := get_features(ctx, &defs)
+	if features.off_flags == 0 {
 		fmt.Printf("no feature info available\n")
 		return 1
 	}
 
-	dump_features(defs, features, nil)
+	dump_features(&defs, &features, nil)
 
 	return 0
 }
@@ -1254,8 +1270,9 @@ func do_sring(ctx *cmd_context) int {
 
 func do_gring(ctx *cmd_context) int {
 
-	// if (ctx.argc != 0)
-	// 	return -1();
+	if ctx.argc != 0 {
+		return -1
+	}
 
 	fmt.Printf("Ring parameters for %s:\n", ctx.devname)
 
@@ -1274,12 +1291,28 @@ func do_gring(ctx *cmd_context) int {
 }
 
 func do_gregs(ctx *cmd_context) int {
-	// int gregs_changed = 0;
+	gregs_changed := 0
 	gregs_dump_raw := 1
 	gregs_dump_hex := 1
-
-	// parse_generic_cmdline(ctx, &gregs_changed,
-	// 		      cmdline_gregs, ARRAY_SIZE(cmdline_gregs));
+	gregs_dump_file := 0
+	cmdline_gregs := []cmdline_info{
+		{
+			name:       "raw",
+			tp:         CMDL_BOOL,
+			wanted_val: uintptr(unsafe.Pointer(&gregs_dump_raw)),
+		},
+		{
+			name:       "hex",
+			tp:         CMDL_BOOL,
+			wanted_val: uintptr(unsafe.Pointer(&gregs_dump_hex)),
+		},
+		{
+			name:       "file",
+			tp:         CMDL_STR,
+			wanted_val: uintptr(unsafe.Pointer(&gregs_dump_file)),
+		},
+	}
+	parse_generic_cmdline(ctx, &gregs_changed, &cmdline_gregs)
 
 	drvinfo := ethtool_drvinfo{cmd: ETHTOOL_GDRVINFO}
 	err := send_ioctl(ctx, uintptr(unsafe.Pointer(&drvinfo)))
@@ -1288,11 +1321,6 @@ func do_gregs(ctx *cmd_context) int {
 		return 72
 	}
 
-	// regs = calloc(1, sizeof(*regs)+drvinfo.regdump_len);
-	// if (!regs) {
-	// 	fmt.Printf("Cannot allocate memory for register dump");
-	// 	return 73;
-	// }
 	regs := ethtool_regs{
 		cmd: ETHTOOL_GREGS,
 		len: drvinfo.regdump_len,
@@ -1346,14 +1374,31 @@ func do_gregs(ctx *cmd_context) int {
 
 func do_geeprom(ctx *cmd_context) int {
 
-	// int geeprom_changed = 0;
+	geeprom_changed := 0
 	geeprom_dump_raw := 0
 	geeprom_offset := uint32(0)
 	geeprom_length := uint32(0)
 	geeprom_length_seen := 0
-
-	// parse_generic_cmdline(ctx, &geeprom_changed,
-	// 		      cmdline_geeprom, ARRAY_SIZE(cmdline_geeprom));
+	cmdline_geeprom := []cmdline_info{
+		{
+			name:       "offset",
+			tp:         CMDL_U32,
+			wanted_val: uintptr(unsafe.Pointer(&geeprom_offset)),
+		},
+		{
+			name:       "length",
+			tp:         CMDL_U32,
+			wanted_val: uintptr(unsafe.Pointer(&geeprom_length)),
+			seen_val:   uintptr(unsafe.Pointer(&geeprom_length_seen)),
+		},
+		{
+			name:       "raw",
+			tp:         CMDL_BOOL,
+			wanted_val: uintptr(unsafe.Pointer(&geeprom_dump_raw)),
+		},
+	}
+	parse_generic_cmdline(ctx, &geeprom_changed,
+		&cmdline_geeprom)
 
 	drvinfo := ethtool_drvinfo{cmd: ETHTOOL_GDRVINFO}
 	err := send_ioctl(ctx, uintptr(unsafe.Pointer(&drvinfo)))
@@ -1393,8 +1438,6 @@ func do_test(ctx *cmd_context) int {
 		EXTERN_LB = 2
 	)
 	test_type := -1
-	// struct ethtool_test *test;
-	// struct ethtool_gstrings *strings;
 
 	if ctx.argc > 1 {
 		return -1
@@ -1448,13 +1491,15 @@ func do_phys_id(ctx *cmd_context) int {
 	var edata ethtool_value
 	var phys_id_time int
 
-	// if (ctx.argc > 1)
-	// 	return -1();
-	// if (ctx.argc == 1)
-	// 	phys_id_time = get_int(*ctx.argp, 0);
-	// else
-	phys_id_time = 0
-
+	if ctx.argc > 1 {
+		return -1
+	}
+	if ctx.argc == 1 {
+		v, _ := strconv.ParseInt(ctx.argp[0], 10, 32)
+		phys_id_time = int(v)
+	} else {
+		phys_id_time = 0
+	}
 	edata.cmd = ETHTOOL_PHYS_ID
 	edata.data = uint32(phys_id_time)
 	err := send_ioctl(ctx, uintptr(unsafe.Pointer(&edata)))
@@ -1469,8 +1514,9 @@ func do_phys_id(ctx *cmd_context) int {
 func do_gstats(ctx *cmd_context, cmd uint32, stringset uint32, name string) int {
 	stats := &ethtool_stats{}
 
-	// if (ctx.argc != 0)
-	// 	return -1();
+	if ctx.argc != 0 {
+		return -1
+	}
 	drvinfo := ethtool_drvinfo{}
 
 	strings := get_stringset(ctx, stringset,
@@ -1556,18 +1602,18 @@ func do_grxclass(ctx *cmd_context) int {
 
 		if ctx.argc == 4 {
 			if ctx.argp[2] == "context" {
-				// return -1();
+				return -1
 			}
 			flow_rss = true
 			val, _ := strconv.ParseUint(ctx.argp[3], 10, 32)
 			nfccmd.rule_cnt = uint32(val)
 		} else if ctx.argc != 2 {
-			// return -1();
+			return -1
 		}
 
 		rx_fhash_get = rxflow_str_to_type(ctx.argp[1])
 		if rx_fhash_get == 0 {
-			// return -1()
+			return -1
 		}
 
 		nfccmd.cmd = ETHTOOL_GRXFH
@@ -1606,7 +1652,7 @@ func do_grxclass(ctx *cmd_context) int {
 		}
 
 	} else {
-		// return -1();
+		return -1
 	}
 
 	if err != nil {
@@ -1617,8 +1663,9 @@ func do_grxclass(ctx *cmd_context) int {
 
 func do_tsinfo(ctx *cmd_context) int {
 
-	// if (ctx.argc != 0)
-	// 	return -1();
+	if ctx.argc != 0 {
+		return -1
+	}
 
 	fmt.Printf("Time stamping parameters for %s:\n", ctx.devname)
 	info := ethtool_ts_info{
@@ -1686,19 +1733,19 @@ func do_grxfhindir(ctx *cmd_context,
 func do_grxfh(ctx *cmd_context) int {
 
 	rss_context := uint32(0)
-	// unsigned int arg_num = 0;
+	arg_num := 0
 	// char *hkey;
 
-	// while (arg_num < ctx.argc) {
-	// 	if (!strcmp(ctx.argp[arg_num], "context")) {
-	// 		++arg_num;
-	// 		rss_context = get_int_range(ctx.argp[arg_num], 0, 1,
-	// 					    ETH_RXFH_CONTEXT_ALLOC - 1);
-	// 		++arg_num;
-	// 	} else {
-	// 		return -1();
-	// 	}
-	// }
+	for arg_num < ctx.argc {
+		if ctx.argp[arg_num] == "context" {
+			arg_num++
+			val, _ := strconv.ParseUint(ctx.argp[arg_num], 10, 32)
+			rss_context = uint32(val)
+			arg_num++
+		} else {
+			return -1
+		}
+	}
 
 	ring_count := ethtool_rxnfc{
 		cmd: ETHTOOL_GRXRINGS,
@@ -1822,10 +1869,9 @@ func do_getfwdump(ctx *cmd_context) int {
 	} else if ctx.argc == 0 {
 		dump_flag = 0
 		dump_file = ""
+	} else {
+		return -1
 	}
-	// else {
-	// 	return -1();
-	// }
 
 	edata := ethtool_dump{cmd: ETHTOOL_GET_DUMP_FLAG}
 
@@ -1928,8 +1974,9 @@ func do_schannels(ctx *cmd_context) int {
 
 func do_gchannels(ctx *cmd_context) int {
 
-	// if (ctx.argc != 0)
-	// 	return -1();
+	if ctx.argc < 1 {
+		return -1
+	}
 
 	fmt.Printf("Channel parameters for %s:\n", ctx.devname)
 
@@ -1949,8 +1996,9 @@ func do_gprivflags(ctx *cmd_context) int {
 
 	max_len, cur_len := 0, 0
 
-	// if (ctx.argc != 0)
-	// 	return -1()
+	if ctx.argc < 1 {
+		return -1
+	}
 	var drvinfo ethtool_drvinfo
 	strings := get_stringset(ctx, ETH_SS_PRIV_FLAGS,
 		unsafe.Offsetof(drvinfo.n_priv_flags), 1)
@@ -2097,8 +2145,9 @@ func do_getmodule(ctx *cmd_context) int {
 
 func do_geee(ctx *cmd_context) int {
 
-	// if (ctx.argc != 0)
-	// 	return -1();
+	if ctx.argc < 1 {
+		return -1
+	}
 
 	eeecmd := ethtool_eee{cmd: ETHTOOL_GEEE}
 	err := send_ioctl(ctx, uintptr(unsafe.Pointer(&eeecmd)))
