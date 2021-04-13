@@ -119,7 +119,7 @@ type ethtool_tunable struct {
 	id      uint32
 	type_id uint32
 	len     uint32
-	data    [0]uintptr
+	data    [8]uintptr
 }
 
 const (

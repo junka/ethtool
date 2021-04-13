@@ -1,6 +1,6 @@
 package ethtool
 
-const IF_NAMESIZE = 16
+const IFNAMESIZE = 16
 
 type if_nameindex struct {
 	if_index uint  /* 1, 2, ... */
@@ -48,7 +48,7 @@ type ifmap struct {
 }
 
 type ifreq struct {
-	ifr_name [IF_NAMESIZE]byte
+	ifr_name [IFNAMESIZE]byte
 	ifr_data uintptr
 }
 

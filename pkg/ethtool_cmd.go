@@ -2,7 +2,6 @@ package ethtool
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"math"
 	"net"
@@ -13,6 +12,7 @@ import (
 	"unsafe"
 
 	"github.com/junka/ioctl"
+	"github.com/spf13/cobra"
 )
 
 const (
@@ -78,8 +78,7 @@ func IPToUInt32(ipnr net.IP) uint32 {
 
 func parse_generic_cmdline(ctx *cmd_context,
 	changed *int,
-	info *[]cmdline_info,
-) int {
+	info *[]cmdline_info) int {
 	argc := ctx.argc
 	argp := ctx.argp
 
@@ -142,13 +141,13 @@ func parse_generic_cmdline(ctx *cmd_context,
 					p := (*uint32)(unsafe.Pointer((*info)[idx].wanted_val))
 					addr := net.ParseIP(argp[i])
 					// if (!inet_aton(argp[i], &in)){
-					// 	exit_bad_args();
+					// 	return -1();
 					// }
 					*p = IPToUInt32(addr)
 
 				// case CMDL_MAC:
 				// 	get_mac_addr(argp[i],
-				// 		info[idx].wanted_val)
+				// 		(*info)[idx].wanted_val)
 
 				case CMDL_FLAG:
 					p := (*uint32)(unsafe.Pointer((*info)[idx].seen_val))
@@ -157,7 +156,6 @@ func parse_generic_cmdline(ctx *cmd_context,
 						p = (*uint32)(unsafe.Pointer(((*info)[idx].wanted_val)))
 						*p |= (*info)[idx].flag_val
 					} else if argp[i] == "off" {
-						// exit_bad_args()
 						return -1
 					}
 
@@ -166,7 +164,6 @@ func parse_generic_cmdline(ctx *cmd_context,
 					copy(*s, (argp[i]))
 
 				default:
-					// exit_bad_args()
 					return -1
 				}
 				break
@@ -192,7 +189,7 @@ func init_ioctl(ctx *cmd_context, no_dev bool) int {
 		ctx.fd = -1
 		return 0
 	}
-	if len(ctx.devname) > IF_NAMESIZE {
+	if len(ctx.devname) > IFNAMESIZE {
 		fmt.Println("Device name longer than %u characters")
 		return -1
 	}
@@ -1167,7 +1164,7 @@ func get_feature_defs(ctx *cmd_context) *feature_defs {
 func do_gfeatures(ctx *cmd_context) int {
 
 	// if (ctx.argc != 0)
-	// 	exit_bad_args();
+	// 	return -1();
 
 	defs := get_feature_defs(ctx)
 	if defs == nil {
@@ -1185,6 +1182,10 @@ func do_gfeatures(ctx *cmd_context) int {
 
 	dump_features(defs, features, nil)
 
+	return 0
+}
+
+func do_sfeatures(ctx *cmd_context) int {
 	return 0
 }
 
@@ -1254,7 +1255,7 @@ func do_sring(ctx *cmd_context) int {
 func do_gring(ctx *cmd_context) int {
 
 	// if (ctx.argc != 0)
-	// 	exit_bad_args();
+	// 	return -1();
 
 	fmt.Printf("Ring parameters for %s:\n", ctx.devname)
 
@@ -1385,13 +1386,70 @@ func do_geeprom(ctx *cmd_context) int {
 
 }
 
+func do_test(ctx *cmd_context) int {
+	const (
+		ONLINE    = 0
+		OFFLINE   = 1
+		EXTERN_LB = 2
+	)
+	test_type := -1
+	// struct ethtool_test *test;
+	// struct ethtool_gstrings *strings;
+
+	if ctx.argc > 1 {
+		return -1
+	}
+
+	if ctx.argc == 1 {
+		if ctx.argp[0] == "online" {
+			test_type = ONLINE
+		} else if ctx.argp[0] == "offline" {
+			test_type = OFFLINE
+		} else if ctx.argp[0] == "external_lb" {
+			test_type = EXTERN_LB
+		} else {
+			return -1
+		}
+	} else {
+		test_type = OFFLINE
+	}
+	drvinfo := ethtool_drvinfo{}
+	strings := get_stringset(ctx, ETH_SS_TEST,
+		unsafe.Offsetof(drvinfo.testinfo_len), 1)
+	if strings == nil {
+		fmt.Printf("Cannot get strings\n")
+		return 74
+	}
+
+	test := ethtool_test{
+		cmd: ETHTOOL_TEST,
+		len: strings.len,
+	}
+
+	if test_type == EXTERN_LB {
+		test.flags = (ETH_TEST_FL_OFFLINE | ETH_TEST_FL_EXTERNAL_LB)
+	} else if test_type == OFFLINE {
+		test.flags = ETH_TEST_FL_OFFLINE
+	} else {
+		test.flags = 0
+	}
+	err := send_ioctl(ctx, uintptr(unsafe.Pointer(&test)))
+	if err != nil {
+		fmt.Printf("Cannot test: %v\n", err)
+		return 74
+	}
+
+	return dump_test(&test, strings)
+
+}
+
 func do_phys_id(ctx *cmd_context) int {
 
 	var edata ethtool_value
 	var phys_id_time int
 
 	// if (ctx.argc > 1)
-	// 	exit_bad_args();
+	// 	return -1();
 	// if (ctx.argc == 1)
 	// 	phys_id_time = get_int(*ctx.argp, 0);
 	// else
@@ -1412,13 +1470,13 @@ func do_gstats(ctx *cmd_context, cmd uint32, stringset uint32, name string) int 
 	stats := &ethtool_stats{}
 
 	// if (ctx.argc != 0)
-	// 	exit_bad_args();
+	// 	return -1();
 	drvinfo := ethtool_drvinfo{}
 
 	strings := get_stringset(ctx, stringset,
 		unsafe.Offsetof(drvinfo.n_stats), 0)
 	if strings == nil {
-		fmt.Printf("Cannot get stats strings information")
+		fmt.Printf("Cannot get stats strings information\n")
 		return 96
 	}
 
@@ -1498,18 +1556,18 @@ func do_grxclass(ctx *cmd_context) int {
 
 		if ctx.argc == 4 {
 			if ctx.argp[2] == "context" {
-				// exit_bad_args();
+				// return -1();
 			}
 			flow_rss = true
 			val, _ := strconv.ParseUint(ctx.argp[3], 10, 32)
 			nfccmd.rule_cnt = uint32(val)
 		} else if ctx.argc != 2 {
-			// exit_bad_args();
+			// return -1();
 		}
 
 		rx_fhash_get = rxflow_str_to_type(ctx.argp[1])
 		if rx_fhash_get == 0 {
-			// exit_bad_args()
+			// return -1()
 		}
 
 		nfccmd.cmd = ETHTOOL_GRXFH
@@ -1548,7 +1606,7 @@ func do_grxclass(ctx *cmd_context) int {
 		}
 
 	} else {
-		// exit_bad_args();
+		// return -1();
 	}
 
 	if err != nil {
@@ -1560,7 +1618,7 @@ func do_grxclass(ctx *cmd_context) int {
 func do_tsinfo(ctx *cmd_context) int {
 
 	// if (ctx.argc != 0)
-	// 	exit_bad_args();
+	// 	return -1();
 
 	fmt.Printf("Time stamping parameters for %s:\n", ctx.devname)
 	info := ethtool_ts_info{
@@ -1638,7 +1696,7 @@ func do_grxfh(ctx *cmd_context) int {
 	// 					    ETH_RXFH_CONTEXT_ALLOC - 1);
 	// 		++arg_num;
 	// 	} else {
-	// 		exit_bad_args();
+	// 		return -1();
 	// 	}
 	// }
 
@@ -1766,7 +1824,7 @@ func do_getfwdump(ctx *cmd_context) int {
 		dump_file = ""
 	}
 	// else {
-	// 	exit_bad_args();
+	// 	return -1();
 	// }
 
 	edata := ethtool_dump{cmd: ETHTOOL_GET_DUMP_FLAG}
@@ -1783,7 +1841,7 @@ func do_getfwdump(ctx *cmd_context) int {
 	}
 	// data = calloc(1, offsetof(struct ethtool_dump, data) + edata.len);
 	// if (!data) {
-	// 	perror("Can not allocate enough memory\n");
+	// 	fmt.Printf("Can not allocate enough memory\n");
 	// 	return 1;
 	// }
 	data := ethtool_dump{
@@ -1871,7 +1929,7 @@ func do_schannels(ctx *cmd_context) int {
 func do_gchannels(ctx *cmd_context) int {
 
 	// if (ctx.argc != 0)
-	// 	exit_bad_args();
+	// 	return -1();
 
 	fmt.Printf("Channel parameters for %s:\n", ctx.devname)
 
@@ -1892,7 +1950,7 @@ func do_gprivflags(ctx *cmd_context) int {
 	max_len, cur_len := 0, 0
 
 	// if (ctx.argc != 0)
-	// 	exit_bad_args()
+	// 	return -1()
 	var drvinfo ethtool_drvinfo
 	strings := get_stringset(ctx, ETH_SS_PRIV_FLAGS,
 		unsafe.Offsetof(drvinfo.n_priv_flags), 1)
@@ -1977,7 +2035,7 @@ func do_getmodule(ctx *cmd_context) int {
 
 	// eeprom = calloc(1, sizeof(*eeprom)+geeprom_length);
 	// if (!eeprom) {
-	// 	perror("Cannot allocate memory for Module EEPROM data");
+	// 	fmt.Printf("Cannot allocate memory for Module EEPROM data");
 	// 	return 1;
 	// }
 
@@ -2040,7 +2098,7 @@ func do_getmodule(ctx *cmd_context) int {
 func do_geee(ctx *cmd_context) int {
 
 	// if (ctx.argc != 0)
-	// 	exit_bad_args();
+	// 	return -1();
 
 	eeecmd := ethtool_eee{cmd: ETHTOOL_GEEE}
 	err := send_ioctl(ctx, uintptr(unsafe.Pointer(&eeecmd)))
@@ -2055,9 +2113,335 @@ func do_geee(ctx *cmd_context) int {
 	return 0
 }
 
+var tunable_strings = [__ETHTOOL_TUNABLE_COUNT]string{
+	"Unspec",
+	"rx-copybreak",
+	"tx-copybreak",
+	"pfc-prevention-tout",
+}
+
+type ethtool_tunable_info struct {
+	t_id      int //tunable_id
+	t_type_id int //tunable_type_id
+	size      int
+	tp        int //cmdline_type_t
+	wanted    uint64
+	seen      int
+}
+
+var tunables_info = []ethtool_tunable_info{
+	{
+		t_id:      int(ETHTOOL_RX_COPYBREAK),
+		t_type_id: int(ETHTOOL_TUNABLE_U32),
+		size:      4,
+		tp:        CMDL_U32,
+	},
+	{
+		t_id:      int(ETHTOOL_TX_COPYBREAK),
+		t_type_id: int(ETHTOOL_TUNABLE_U32),
+		size:      4,
+		tp:        CMDL_U32,
+	},
+	{
+		t_id:      int(ETHTOOL_PFC_PREVENTION_TOUT),
+		t_type_id: int(ETHTOOL_TUNABLE_U16),
+		size:      2,
+		tp:        CMDL_U16,
+	},
+}
+
+func do_stunable(ctx *cmd_context) int {
+	var cmdline_tunable []cmdline_info
+	tinfo := tunables_info
+	changed := 0
+
+	for i := 0; i < len(tunables_info); i++ {
+		cmdline_tunable[i].name = tunable_strings[tinfo[i].t_id]
+		cmdline_tunable[i].tp = tinfo[i].tp
+		cmdline_tunable[i].wanted_val = uintptr(unsafe.Pointer(&tinfo[i].wanted))
+		cmdline_tunable[i].seen_val = uintptr(unsafe.Pointer(&tinfo[i].seen))
+	}
+
+	parse_generic_cmdline(ctx, &changed, &cmdline_tunable)
+	if changed == 0 {
+		return -1
+	}
+
+	for i := 0; i < len(tunables_info); i++ {
+
+		if tinfo[i].seen == 0 {
+			continue
+		}
+
+		tuna := ethtool_tunable{
+			cmd:     uint32(ETHTOOL_STUNABLE),
+			id:      uint32(tinfo[i].t_id),
+			type_id: uint32(tinfo[i].t_type_id),
+			len:     uint32(tinfo[i].size),
+		}
+		// copy(tuna.data, &tinfo[i].wanted)
+		ret := send_ioctl(ctx, uintptr(unsafe.Pointer(&tuna)))
+		if ret != nil {
+			fmt.Printf(tunable_strings[tuna.id])
+			return -1
+		}
+	}
+	return 0
+}
+
+func print_tunable(tuna *ethtool_tunable) {
+	name := tunable_strings[tuna.id]
+
+	val := tuna.data
+	switch tuna.type_id {
+	case ETHTOOL_TUNABLE_U8:
+		fmt.Printf("%s: %d\n", name, val)
+
+	case ETHTOOL_TUNABLE_U16:
+		fmt.Printf("%s: %d\n", name, val)
+
+	case ETHTOOL_TUNABLE_U32:
+		fmt.Printf("%s: %d\n", name, val)
+
+	case ETHTOOL_TUNABLE_U64:
+		fmt.Printf("%s: %d\n", name, val)
+
+	case ETHTOOL_TUNABLE_S8:
+		fmt.Printf("%s: %d\n", name, val)
+
+	case ETHTOOL_TUNABLE_S16:
+		fmt.Printf("%s: %d\n", name, val)
+
+	case ETHTOOL_TUNABLE_S32:
+		fmt.Printf("%s: %d\n", name, val)
+
+	case ETHTOOL_TUNABLE_S64:
+		fmt.Printf("%s: %d\n", name, val)
+
+	default:
+		fmt.Printf("%s: Unknown format\n", name)
+	}
+}
+
+func do_gtunable(ctx *cmd_context) int {
+	tinfo := tunables_info
+	argp := ctx.argp
+	argc := ctx.argc
+
+	if argc < 1 {
+		return -1
+	}
+
+	for i := 0; i < argc; i++ {
+		valid := 0
+
+		for j := 0; j < len(tunables_info); j++ {
+			ts := tunable_strings[tinfo[j].t_id]
+
+			if argp[i] != ts {
+				continue
+			}
+			valid = 1
+
+			tuna := ethtool_tunable{
+				cmd:     ETHTOOL_GTUNABLE,
+				id:      uint32(tinfo[j].t_id),
+				type_id: uint32(tinfo[j].t_type_id),
+				len:     uint32(tinfo[j].size),
+			}
+			err := send_ioctl(ctx, uintptr(unsafe.Pointer(&tuna)))
+			if err != nil {
+				fmt.Printf("%s: Cannot get tunable: %v\n", ts, err)
+				return -1
+			}
+			print_tunable(&tuna)
+		}
+		if valid == 0 {
+			return -1
+		}
+	}
+	return 0
+}
+
+func do_get_phy_tunable(ctx *cmd_context) int {
+	argc := ctx.argc
+	argp := ctx.argp
+
+	if argc < 1 {
+		return -1
+	}
+
+	if argp[0] == "downshift" {
+
+		cont := struct {
+			ds    ethtool_tunable
+			count uint8
+		}{
+			ds: ethtool_tunable{
+				cmd:     ETHTOOL_PHY_GTUNABLE,
+				id:      ETHTOOL_PHY_DOWNSHIFT,
+				type_id: ETHTOOL_TUNABLE_U8,
+				len:     1,
+			},
+		}
+
+		if send_ioctl(ctx, uintptr(unsafe.Pointer(&cont.ds))) != nil {
+			fmt.Printf("Cannot Get PHY downshift count\n")
+			return 87
+		}
+		if cont.count != 0 {
+			fmt.Printf("Downshift count: %d\n", cont.count)
+		} else {
+			fmt.Printf("Downshift disabled\n")
+		}
+	} else if argp[0] == "fast-link-down" {
+		cont := struct {
+			fld   ethtool_tunable
+			msecs uint8
+		}{
+			fld: ethtool_tunable{
+				cmd:     ETHTOOL_PHY_GTUNABLE,
+				id:      ETHTOOL_PHY_FAST_LINK_DOWN,
+				type_id: ETHTOOL_TUNABLE_U8,
+				len:     1,
+			},
+		}
+		if send_ioctl(ctx, uintptr(unsafe.Pointer(&cont.fld))) != nil {
+			fmt.Printf("Cannot Get PHY Fast Link Down value\n")
+			return 87
+		}
+
+		if cont.msecs == ETHTOOL_PHY_FAST_LINK_DOWN_ON {
+			fmt.Printf("Fast Link Down enabled\n")
+		} else if cont.msecs == ETHTOOL_PHY_FAST_LINK_DOWN_OFF {
+			fmt.Printf("Fast Link Down disabled\n")
+		} else {
+			fmt.Printf("Fast Link Down enabled, %d msecs\n",
+				cont.msecs)
+		}
+	} else if argp[0] == "energy-detect-power-down" {
+		cont := struct {
+			ds    ethtool_tunable
+			msecs uint16
+		}{
+			ds: ethtool_tunable{
+				cmd:     ETHTOOL_PHY_GTUNABLE,
+				id:      ETHTOOL_PHY_EDPD,
+				type_id: ETHTOOL_TUNABLE_U16,
+				len:     2,
+			},
+		}
+		if send_ioctl(ctx, uintptr(unsafe.Pointer(&cont.ds))) != nil {
+			fmt.Printf("Cannot Get PHY Energy Detect Power Down value\n")
+			return 87
+		}
+
+		if cont.msecs == ETHTOOL_PHY_EDPD_DISABLE {
+			fmt.Printf("Energy Detect Power Down: disabled\n")
+		} else if cont.msecs == ETHTOOL_PHY_EDPD_NO_TX {
+			fmt.Printf("Energy Detect Power Down: enabled, TX disabled\n")
+		} else {
+			fmt.Printf("Energy Detect Power Down: enabled, TX %d msecs\n",
+				cont.msecs)
+		}
+	} else {
+		return -1
+	}
+
+	return 0
+}
+
+func fecmode_str_to_type(str string) int {
+	if str == "auto" {
+		return ETHTOOL_FEC_AUTO
+	}
+	if str == "off" {
+		return ETHTOOL_FEC_OFF
+	}
+	if str == "rs" {
+		return ETHTOOL_FEC_RS
+	}
+	if str == "baser" {
+		return ETHTOOL_FEC_BASER
+	}
+	if str == "llrs" {
+		return ETHTOOL_FEC_LLRS
+	}
+	return 0
+}
+
+func do_gfec(ctx *cmd_context) int {
+
+	if ctx.argc != 0 {
+		return -1
+	}
+	feccmd := ethtool_fecparam{
+		cmd: ETHTOOL_GFECPARAM,
+	}
+	err := send_ioctl(ctx, uintptr(unsafe.Pointer(&feccmd)))
+	if err != nil {
+		fmt.Printf("Cannot get FEC settings: %v\n", err)
+		return -1
+	}
+
+	fmt.Printf("FEC parameters for %s:\n", ctx.devname)
+	fmt.Printf("Configured FEC encodings:")
+	dump_fec(feccmd.fec)
+	fmt.Printf("\n")
+
+	fmt.Printf("Active FEC encoding:")
+	dump_fec(feccmd.active_fec)
+	fmt.Printf("\n")
+
+	return 0
+}
+
+func do_sfec(ctx *cmd_context) int {
+	const (
+		ARG_NONE     = 0
+		ARG_ENCODING = 1
+	)
+
+	newmode, fecmode := 0, 0
+	state := ARG_NONE
+	for i := 0; i < ctx.argc; i++ {
+		if ctx.argp[i] == "encoding" {
+			state = ARG_ENCODING
+			continue
+		}
+		if state == ARG_ENCODING {
+			newmode = fecmode_str_to_type(ctx.argp[i])
+			if newmode == 0 {
+				return -1
+			}
+			fecmode |= newmode
+			continue
+		}
+		return -1
+	}
+
+	if fecmode == 0 {
+		return -1
+	}
+	feccmd := ethtool_fecparam{
+		cmd: ETHTOOL_SFECPARAM,
+		fec: uint32(fecmode),
+	}
+	err := send_ioctl(ctx, uintptr(unsafe.Pointer(&feccmd)))
+	if err != nil {
+		fmt.Printf("Cannot set FEC settings: %v\n", err)
+		return -1
+	}
+
+	return 0
+}
+
 type func_t func(*cmd_context) int
 type options struct {
-	opts      *bool /*flag string*/
+	name      string /*command string*/
+	short     string
+	value     bool
+	help      string
 	no_dev    bool
 	ioctlfunc func_t
 	nlfunc    func_t
@@ -2065,241 +2449,214 @@ type options struct {
 }
 
 var (
+	rootCmd = &cobra.Command{
+		Use: "ethtool",
+		Short: "ethtool DEVNAME	Display standard information about device",
+		Run: Do_actions,
+	}
+
 	opt_args = []options{
-		{flag.Bool("s", false, "Change generic options"), true, nil, nil, "		[ speed %d ]\n" +
-			"		[ duplex half|full ]\n" +
-			"		[ port tp|aui|bnc|mii|fibre|da ]\n" +
-			"		[ mdix auto|on|off ]\n" +
+		{"change", "s", false, "Change generic options", true, nil, nil,
+			"		[ speed %d ]\n" +
+				"		[ duplex half|full ]\n" +
+				"		[ port tp|aui|bnc|mii|fibre|da ]\n" +
+				"		[ mdix auto|on|off ]\n" +
+				"		[ autoneg on|off ]\n" +
+				"		[ advertise %x[/%x] | mode on|off ... [--] ]\n" +
+				"		[ phyad %d ]\n" +
+				"		[ xcvr internal|external ]\n" +
+				"		[ wol %d[/%d] | p|u|m|b|a|g|s|f|d... ]\n" +
+				"		[ sopass %x:%x:%x:%x:%x:%x ]\n" +
+				"		[ msglvl %d[/%d] | type on|off ... [--] ]\n" +
+				"		[ master-slave master-preferred|slave-preferred|master-force|slave-force ]\n"},
+		{"show-pause", "a", false, "Show pause options", true, do_gpause, nil, ""},
+		{"pause", "A", false, "Set pause options", true, do_spause, nil,
 			"		[ autoneg on|off ]\n" +
-			"		[ advertise %x[/%x] | mode on|off ... [--] ]\n" +
-			"		[ phyad %d ]\n" +
-			"		[ xcvr internal|external ]\n" +
-			"		[ wol %d[/%d] | p|u|m|b|a|g|s|f|d... ]\n" +
-			"		[ sopass %x:%x:%x:%x:%x:%x ]\n" +
-			"		[ msglvl %d[/%d] | type on|off ... [--] ]\n" +
-			"		[ master-slave master-preferred|slave-preferred|master-force|slave-force ]\n"},
-		{flag.Bool("a", false, "Show pause options"), true, do_gpause, nil, ""},
-		{flag.Bool("A", false, "Set pause options"), true, do_spause, nil, "		[ autoneg on|off ]\n" +
-			"		[ rx on|off ]\n" +
-			"		[ tx on|off ]\n"},
-		{flag.Bool("c", false, "Show coalesce options"), true, do_gcoalesce, nil, ""},
-		{flag.Bool("C", false, "Show pause options"), true, nil, nil, "		[adaptive-rx on|off]\n" +
-			"		[adaptive-tx on|off]\n" +
-			"		[rx-usecs N]\n" +
-			"		[rx-frames N]\n" +
-			"		[rx-usecs-irq N]\n" +
-			"		[rx-frames-irq N]\n" +
-			"		[tx-usecs N]\n" +
-			"		[tx-frames N]\n" +
-			"		[tx-usecs-irq N]\n" +
-			"		[tx-frames-irq N]\n" +
-			"		[stats-block-usecs N]\n" +
-			"		[pkt-rate-low N]\n" +
-			"		[rx-usecs-low N]\n" +
-			"		[rx-frames-low N]\n" +
-			"		[tx-usecs-low N]\n" +
-			"		[tx-frames-low N]\n" +
-			"		[pkt-rate-high N]\n" +
-			"		[rx-usecs-high N]\n" +
-			"		[rx-frames-high N]\n" +
-			"		[tx-usecs-high N]\n" +
-			"		[tx-frames-high N]\n" +
-			"		[sample-interval N]\n"},
-		{flag.Bool("g", false, "Query RX/TX ring parameters"), true, do_gring, nil, ""},
+				"		[ rx on|off ]\n" +
+				"		[ tx on|off ]\n"},
+		{"show-coalesce", "c", false, "Show coalesce options", true, do_gcoalesce, nil, ""},
+		{"coalesce", "C", false, "Set coalesce options", true, nil, nil,
+			"		[adaptive-rx on|off]\n" +
+				"		[adaptive-tx on|off]\n" +
+				"		[rx-usecs N]\n" +
+				"		[rx-frames N]\n" +
+				"		[rx-usecs-irq N]\n" +
+				"		[rx-frames-irq N]\n" +
+				"		[tx-usecs N]\n" +
+				"		[tx-frames N]\n" +
+				"		[tx-usecs-irq N]\n" +
+				"		[tx-frames-irq N]\n" +
+				"		[stats-block-usecs N]\n" +
+				"		[pkt-rate-low N]\n" +
+				"		[rx-usecs-low N]\n" +
+				"		[rx-frames-low N]\n" +
+				"		[tx-usecs-low N]\n" +
+				"		[tx-frames-low N]\n" +
+				"		[pkt-rate-high N]\n" +
+				"		[rx-usecs-high N]\n" +
+				"		[rx-frames-high N]\n" +
+				"		[tx-usecs-high N]\n" +
+				"		[tx-frames-high N]\n" +
+				"		[sample-interval N]\n"},
+		{"show-ring", "g", false, "Query RX/TX ring parameters", true, do_gring, nil, ""},
 
-		{flag.Bool("G", false, "Set RX/TX ring parameters"), true, do_sring, nil, "		[ rx N ]\n" +
-			"		[ rx-mini N ]\n" +
-			"		[ rx-jumbo N ]\n" +
-			"		[ tx N ]\n"},
-		{flag.Bool("k", false, "Get state of protocol offload and other features"), true, do_gfeatures, nil, ""},
-		{flag.Bool("K", false, "Set protocol offload and other features"), true, nil, nil, "		FEATURE on|off ...\n"},
+		{"set-ring", "G", false, "Set RX/TX ring parameters", true, do_sring, nil,
+			"		[ rx N ]\n" +
+				"		[ rx-mini N ]\n" +
+				"		[ rx-jumbo N ]\n" +
+				"		[ tx N ]\n"},
+		{"show-features", "k", false, "Get state of protocol offload and other features", true, do_gfeatures, nil, ""},
+		{"features", "K", false, "Set protocol offload and other features", true, nil, nil,
+			"		FEATURE on|off ...\n"},
 
-		{flag.Bool("i", false, "Show driver information"), true, do_gdrv, nil, ""},
-		{flag.Bool("d", false, "Do a register dump"), true, do_gregs, nil, "		[ raw on|off ]\n" +
-			"		[ file FILENAME ]\n"},
-		{flag.Bool("e", false, "Do a EEPROM dump"), true, do_geeprom, nil, "		[ raw on|off ]\n" +
-			"		[ offset N ]\n" +
-			"		[ length N ]\n"},
-		{flag.Bool("E", false, "Change bytes in device EEPROM"), true, nil, nil, "		[ magic N ]\n" +
-			"		[ offset N ]\n" +
-			"		[ length N ]\n" +
-			"		[ value N ]\n"},
-		{flag.Bool("r", false, "Restart N-WAY negotiation"), true, nil, nil, ""},
-		{flag.Bool("p", false, "Show visible port identification (e.g. blinking)"), true, do_phys_id, nil, "               [ TIME-IN-SECONDS ]\n"},
-		{flag.Bool("t", false, "Execute adapter self test"), true, nil, nil, "               [ online | offline | external_lb ]\n"},
-		{flag.Bool("S", false, "Show adapter statistics"), true, do_gnicstats, nil, ""},
-		{flag.Bool("phy-statistics", false, "Show phy statistics"), true, do_gphystats, nil, ""},
-		{flag.Bool("n", false, "Show Rx network flow classification options or rules"), true, do_grxclass, nil, "		[ rx-flow-hash tcp4|udp4|ah4|esp4|sctp4|" +
-			"tcp6|udp6|ah6|esp6|sctp6 [context %d] |\n" +
-			"		  rule %d ]\n"},
-		{flag.Bool("N", false, "Configure Rx network flow classification options or rules"), true, nil, nil, "		rx-flow-hash tcp4|udp4|ah4|esp4|sctp4|" +
-			"tcp6|udp6|ah6|esp6|sctp6 m|v|t|s|d|f|n|r... [context %d] |\n" +
-			"		flow-type ether|ip4|tcp4|udp4|sctp4|ah4|esp4|" +
-			"ip6|tcp6|udp6|ah6|esp6|sctp6\n" +
-			"			[ src %x:%x:%x:%x:%x:%x [m %x:%x:%x:%x:%x:%x] ]\n" +
-			"			[ dst %x:%x:%x:%x:%x:%x [m %x:%x:%x:%x:%x:%x] ]\n" +
-			"			[ proto %d [m %x] ]\n" +
-			"			[ src-ip IP-ADDRESS [m IP-ADDRESS] ]\n" +
-			"			[ dst-ip IP-ADDRESS [m IP-ADDRESS] ]\n" +
-			"			[ tos %d [m %x] ]\n" +
-			"			[ tclass %d [m %x] ]\n" +
-			"			[ l4proto %d [m %x] ]\n" +
-			"			[ src-port %d [m %x] ]\n" +
-			"			[ dst-port %d [m %x] ]\n" +
-			"			[ spi %d [m %x] ]\n" +
-			"			[ vlan-etype %x [m %x] ]\n" +
-			"			[ vlan %x [m %x] ]\n" +
-			"			[ user-def %x [m %x] ]\n" +
-			"			[ dst-mac %x:%x:%x:%x:%x:%x [m %x:%x:%x:%x:%x:%x] ]\n" +
-			"			[ action %d ] | [ vf %d queue %d ]\n" +
-			"			[ context %d ]\n" +
-			"			[ loc %d]] |\n" +
-			"		delete %d\n"},
-		{flag.Bool("T", false, "Show time stamping capabilities"), true, do_tsinfo, nil, ""},
-		{flag.Bool("x", false, "Show Rx flow hash indirection table and/or RSS hash key"), true, do_grxfh, nil, "		[ context %d ]\n"},
-		{flag.Bool("X|--set-rxfh-indir|--rxfh", false, "Set Rx flow hash indirection table and/or RSS hash key"), true, nil, nil, "		[ context %d|new ]\n" +
-			"		[ equal N | weight W0 W1 ... | default ]\n" +
-			"		[ hkey %x:%x:%x:%x:%x:.... ]\n" +
-			"		[ hfunc FUNC ]\n" +
-			"		[ delete ]\n"},
-		{flag.Bool("f", false, "Flash firmware image from the specified file to a region on the device"), true, nil, nil, "               FILENAME [ REGION-NUMBER-TO-FLASH ]\n"},
-		{flag.Bool("P", false, "Show permanent hardware address"), true, do_permaddr, nil, ""},
-		{flag.Bool("w", false, "Get dump flag, data"), true, do_getfwdump, nil, "		[ data FILENAME ]\n"},
-		{flag.Bool("W", false, "Set dump flag of the device"), true, nil, nil, "		N\n"},
-		{flag.Bool("l", false, "Query Channels"), true, do_gchannels, nil, ""},
-		{flag.Bool("L", false, "Set Channels"), true, do_schannels, nil, "               [ rx N ]\n" +
+		{"driver", "i", false, "Show driver information", true, do_gdrv, nil, ""},
+		{"register-dump", "d", false, "Do a register dump", true, do_gregs, nil,
+			"		[ raw on|off ]\n" +
+				"		[ file FILENAME ]\n"},
+		{"eeprom-dump", "e", false, "Do a EEPROM dump", true, do_geeprom, nil,
+			"		[ raw on|off ]\n" +
+				"		[ offset N ]\n" +
+				"		[ length N ]\n"},
+		{"change-eeprom", "E", false, "Change bytes in device EEPROM", true, nil, nil,
+			"		[ magic N ]\n" +
+				"		[ offset N ]\n" +
+				"		[ length N ]\n" +
+				"		[ value N ]\n"},
+		{"negotiate", "r", false, "Restart N-WAY negotiation", true, nil, nil, ""},
+		{"identify", "p", false, "Show visible port identification (e.g. blinking)", true, do_phys_id, nil,
+			"               [ TIME-IN-SECONDS ]\n"},
+		{"test", "t", false, "Execute adapter self test", true, do_test, nil,
+			"               [ online | offline | external_lb ]\n"},
+		{"statistics", "S", false, "Show adapter statistics", true, do_gnicstats, nil, ""},
+		{"phy-statistics", "", false, "Show phy statistics", true, do_gphystats, nil, ""},
+		{"show-ntuple", "n", false, "Show Rx network flow classification options or rules", true, do_grxclass, nil,
+			"		[ rx-flow-hash tcp4|udp4|ah4|esp4|sctp4|" +
+				"tcp6|udp6|ah6|esp6|sctp6 [context %d] |\n" +
+				"		  rule %d ]\n"},
+		{"config-ntuple", "N", false, "Configure Rx network flow classification options or rules", true, nil, nil,
+			"		rx-flow-hash tcp4|udp4|ah4|esp4|sctp4|" +
+				"tcp6|udp6|ah6|esp6|sctp6 m|v|t|s|d|f|n|r... [context %d] |\n" +
+				"		flow-type ether|ip4|tcp4|udp4|sctp4|ah4|esp4|" +
+				"ip6|tcp6|udp6|ah6|esp6|sctp6\n" +
+				"			[ src %x:%x:%x:%x:%x:%x [m %x:%x:%x:%x:%x:%x] ]\n" +
+				"			[ dst %x:%x:%x:%x:%x:%x [m %x:%x:%x:%x:%x:%x] ]\n" +
+				"			[ proto %d [m %x] ]\n" +
+				"			[ src-ip IP-ADDRESS [m IP-ADDRESS] ]\n" +
+				"			[ dst-ip IP-ADDRESS [m IP-ADDRESS] ]\n" +
+				"			[ tos %d [m %x] ]\n" +
+				"			[ tclass %d [m %x] ]\n" +
+				"			[ l4proto %d [m %x] ]\n" +
+				"			[ src-port %d [m %x] ]\n" +
+				"			[ dst-port %d [m %x] ]\n" +
+				"			[ spi %d [m %x] ]\n" +
+				"			[ vlan-etype %x [m %x] ]\n" +
+				"			[ vlan %x [m %x] ]\n" +
+				"			[ user-def %x [m %x] ]\n" +
+				"			[ dst-mac %x:%x:%x:%x:%x:%x [m %x:%x:%x:%x:%x:%x] ]\n" +
+				"			[ action %d ] | [ vf %d queue %d ]\n" +
+				"			[ context %d ]\n" +
+				"			[ loc %d]] |\n" +
+				"		delete %d\n"},
+		{"show-time-stamping", "T", false, "Show time stamping capabilities", true, do_tsinfo, nil, ""},
+		{"show-rxfh", "x", false, "Show Rx flow hash indirection table and/or RSS hash key", true, do_grxfh, nil,
+			"		[ context %d ]\n"},
+		{"rxfh", "X", false, "Set Rx flow hash indirection table and/or RSS hash key", true, nil, nil,
+			"		[ context %d|new ]\n" +
+				"		[ equal N | weight W0 W1 ... | default ]\n" +
+				"		[ hkey %x:%x:%x:%x:%x:.... ]\n" +
+				"		[ hfunc FUNC ]\n" +
+				"		[ delete ]\n"},
+		{"flash", "f", false, "Flash firmware image from the specified file to a region on the device", true, nil, nil,
+			"               FILENAME [ REGION-NUMBER-TO-FLASH ]\n"},
+		{"show-permaddr", "P", false, "Show permanent hardware address", true, do_permaddr, nil, ""},
+		{"get-dump", "w", false, "Get dump flag, data", true, do_getfwdump, nil, "		[ data FILENAME ]\n"},
+		{"set-dump", "W", false, "Set dump flag of the device", true, nil, nil, "		N\n"},
+		{"show-channels", "l", false, "Query Channels", true, do_gchannels, nil, ""},
+		{"set-channels", "L", false, "Set Channels", true, nil, nil, "               [ rx N ]\n" +
 			"               [ tx N ]\n" +
 			"               [ other N ]\n" +
 			"               [ combined N ]\n"},
-		{flag.Bool("show-priv-flags", false, "Query private flags"), true, do_gprivflags, nil, ""},
-		{flag.Bool("set-priv-flag", false, "Set private flags"), true, nil, nil, "		FLAG on|off ...\n"},
-		{flag.Bool("m", false, "Query/Decode Module EEPROM information and optical diagnostics if available"), true, do_getmodule, nil, "		[ raw on|off ]\n" +
-			"		[ hex on|off ]\n" +
-			"		[ offset N ]\n" +
-			"		[ length N ]\n"},
-		{flag.Bool("show-eee", false, "Show EEE settings"), true, do_geee, nil, ""},
-		{flag.Bool("set-eee", false, "Set EEE settings"), true, nil, nil, "		[ eee on|off ]\n" +
-			"		[ advertise %x ]\n" +
-			"		[ tx-lpi on|off ]\n" +
-			"		[ tx-timer %d ]\n"},
-		{flag.Bool("set-phy-tunable", false, "Set PHY tunable"), true, nil, nil, "		[ downshift on|off [count N] ]\n" +
-			"		[ fast-link-down on|off [msecs N] ]\n" +
-			"		[ energy-detect-power-down on|off [msecs N] ]\n"},
-		{flag.Bool("get-phy-tunable", false, "Get PHY tunable"), true, nil, nil, "		[ downshift ]\n" +
-			"		[ fast-link-down ]\n" +
-			"		[ energy-detect-power-down ]\n"},
-		{flag.Bool("set-tunable", false, "Set tunable"), true, nil, nil, "		[ rx-copybreak N]\n" +
-			"		[ tx-copybreak N]\n" +
-			"		[ pfc-precention-tout N]\n"},
-		{flag.Bool("get-tunable", false, "Get tunable"), true, nil, nil, "		[ rx-copybreak ]\n" +
-			"		[ tx-copybreak ]\n" +
-			"		[ pfc-precention-tout ]\n"},
-		{flag.Bool("reset", false, "Reset components"), true, nil, nil, "		[ flags %x ]\n" +
-			"		[ mgmt ]\n" +
-			"		[ mgmt-shared ]\n" +
-			"		[ irq ]\n" +
-			"		[ irq-shared ]\n" +
-			"		[ dma ]\n" +
-			"		[ dma-shared ]\n" +
-			"		[ filter ]\n" +
-			"		[ filter-shared ]\n" +
-			"		[ offload ]\n" +
-			"		[ offload-shared ]\n" +
-			"		[ mac ]\n" +
-			"		[ mac-shared ]\n" +
-			"		[ phy ]\n" +
-			"		[ phy-shared ]\n" +
-			"		[ ram ]\n" +
-			"		[ ram-shared ]\n" +
-			"		[ ap ]\n" +
-			"		[ ap-shared ]\n" +
-			"		[ dedicated ]\n" +
-			"		[ all ]\n"},
-		{flag.Bool("show-fec", false, "Show FEC setting"), true, nil, nil, ""},
-		{flag.Bool("set-fec", false, "Set FEC setting"), true, nil, nil, "		[ encoding auto|off|rs|baser|llrs [...]]\n"},
-		{flag.Bool("Q", false, "Apply per-queue command."), true, nil, nil, "The supported sub commands include --show-coalesce, --coalesce" +
-			"             [queue_mask %x] SUB_COMMAND\n"},
-		{flag.Bool("cable-test", false, "Perform a cable test"), true, nil, nil, ""},
-		{flag.Bool("cable-test-tdr", false, "Print cable test time domain reflectrometery data"), true, nil, nil, "		[ first N ]\n" +
-			"		[ last N ]\n" +
-			"		[ step N ]\n" +
-			"		[ pair N ]\n"},
-		{flag.Bool("show-tunnels", false, "Show NIC tunnel offload information"), true, nil, nil, ""},
-		{flag.Bool("version", false, "Show version number"), false, do_version, nil, ""},
+		{"show-priv-flags", "", false, "Query private flags", true, do_gprivflags, nil, ""},
+		{"set-priv-flag", "", false, "Set private flags", true, nil, nil, "		FLAG on|off ...\n"},
+		{"module-info", "m", false, "Query/Decode Module EEPROM information and optical diagnostics if available", true, do_getmodule, nil,
+			"		[ raw on|off ]\n" +
+				"		[ hex on|off ]\n" +
+				"		[ offset N ]\n" +
+				"		[ length N ]\n"},
+		{"show-eee", "", false, "Show EEE settings", true, do_geee, nil, ""},
+		{"set-eee", "", false, "Set EEE settings", true, nil, nil,
+			"		[ eee on|off ]\n" +
+				"		[ advertise %x ]\n" +
+				"		[ tx-lpi on|off ]\n" +
+				"		[ tx-timer %d ]\n"},
+		{"set-phy-tunable", "", false, "Set PHY tunable", true, nil, nil,
+			"		[ downshift on|off [count N] ]\n" +
+				"		[ fast-link-down on|off [msecs N] ]\n" +
+				"		[ energy-detect-power-down on|off [msecs N] ]\n"},
+		{"get-phy-tunable", "", false, "Get PHY tunable", true, do_get_phy_tunable, nil,
+			"		[ downshift ]\n" +
+				"		[ fast-link-down ]\n" +
+				"		[ energy-detect-power-down ]\n"},
+		{"set-tunable", "", false, "Set tunable", true, do_stunable, nil,
+			"		[ rx-copybreak N]\n" +
+				"		[ tx-copybreak N]\n" +
+				"		[ pfc-precention-tout N]\n"},
+		{"get-tunable", "", false, "Get tunable", true, do_gtunable, nil,
+			"		[ rx-copybreak ]\n" +
+				"		[ tx-copybreak ]\n" +
+				"		[ pfc-precention-tout ]\n"},
+		{"reset", "", false, "Reset components", true, nil, nil,
+			"		[ flags %x ]\n" +
+				"		[ mgmt ]\n" +
+				"		[ mgmt-shared ]\n" +
+				"		[ irq ]\n" +
+				"		[ irq-shared ]\n" +
+				"		[ dma ]\n" +
+				"		[ dma-shared ]\n" +
+				"		[ filter ]\n" +
+				"		[ filter-shared ]\n" +
+				"		[ offload ]\n" +
+				"		[ offload-shared ]\n" +
+				"		[ mac ]\n" +
+				"		[ mac-shared ]\n" +
+				"		[ phy ]\n" +
+				"		[ phy-shared ]\n" +
+				"		[ ram ]\n" +
+				"		[ ram-shared ]\n" +
+				"		[ ap ]\n" +
+				"		[ ap-shared ]\n" +
+				"		[ dedicated ]\n" +
+				"		[ all ]\n"},
+		{"show-fec", "", false, "Show FEC setting", true, do_gfec, nil, ""},
+		{"set-fec", "", false, "Set FEC setting", true, do_sfec, nil,
+			"		[ encoding auto|off|rs|baser|llrs [...]]\n"},
+		{"per-queue", "Q", false, "Apply per-queue command.", true, nil, nil,
+			"The supported sub commands include --show-coalesce, --coalesce" +
+				"             [queue_mask %x] SUB_COMMAND\n"},
+		{"cable-test", "", false, "Perform a cable test", true, nil, nil, ""},
+		{"cable-test-tdr", "", false, "Print cable test time domain reflectrometery data", true, nil, nil,
+			"		[ first N ]\n" +
+				"		[ last N ]\n" +
+				"		[ step N ]\n" +
+				"		[ pair N ]\n"},
+		{"show-tunnels", "", false, "Show NIC tunnel offload information", true, nil, nil, ""},
+		{"version", "", false, "Show version number", false, do_version, nil, ""},
 	}
 )
 
 // Show_usage
-func Show_usage() {
+func show_usage() {
 	fmt.Printf("ethtool version %s\n", "1.0.0")
 	fmt.Printf("Usage:\n" +
 		"        ethtool [ FLAGS ] DEVNAME\t" +
 		"Display standard information about device\n")
-	flag.PrintDefaults()
+	// flag.PrintDefaults()
 	fmt.Printf("\n")
 	fmt.Printf("FLAGS:\n")
 	fmt.Printf("	--debug MASK	turn on debugging messages\n")
 	fmt.Printf("	--json		enable JSON output format (not supported by all commands)\n")
 	fmt.Printf("	-I|--include-statistics		request device statistics related to the command (not supported by all commands)\n")
 
-}
-
-// Parse_args parse the args
-func Parse_args() error {
-	flag.Parse()
-	cnt := 0
-	for i := 0; i < len(opt_args); i++ {
-		if *opt_args[i].opts {
-			cnt++
-		}
-	}
-	if cnt > 1 {
-		fmt.Printf("ethtool: bad command line argument(s)\n")
-		return errors.New("bad command line argument(s)")
-	}
-	return nil
-}
-
-// Do_actions will call ioctl to get or set infos
-func Do_actions() int {
-	var ctx cmd_context
-	no_dev := true
-	i := 0
-
-	for ; i < len(opt_args); i++ {
-		if *opt_args[i].opts {
-			if opt_args[i].no_dev == false {
-				no_dev = false
-			}
-			break
-		}
-	}
-	if i >= len(opt_args) {
-		return -1
-	}
-	args := flag.Args()
-	if no_dev == true {
-		if len(args) == 0 {
-			fmt.Printf("ethtool: bad command line argument(s)\n" +
-				"For more information run ethtool -h\n")
-			return -1
-		}
-		ctx.devname = args[0]
-	}
-	if len(args) > 1 {
-		ctx.argc = len(args) - 1
-		ctx.argp = args[1:]
-	}
-	if opt_args[i].ioctlfunc == nil {
-		fmt.Printf("Function not supported yet\n")
-		return -1
-	}
-	err := init_ioctl(&ctx, no_dev)
-	if err != 0 {
-		return err
-	}
-	defer uninit_ioctl(&ctx)
-	return opt_args[i].ioctlfunc(&ctx)
 }
 
 func find_max_num_queues(ctx *cmd_context) int {
@@ -2310,4 +2667,66 @@ func find_max_num_queues(ctx *cmd_context) int {
 		return -1
 	}
 	return int(math.Max(float64(echannels.rx_count), float64(echannels.tx_count))) + int(echannels.combined_count)
+}
+
+func init() {
+	for i := 0; i < len(opt_args); i++ {
+		if opt_args[i].short == "" {
+			rootCmd.Flags().Bool(opt_args[i].name, opt_args[i].value, opt_args[i].help)
+		} else {
+			rootCmd.Flags().BoolP(opt_args[i].name, opt_args[i].short, opt_args[i].value, opt_args[i].help)
+		}
+	}
+}
+
+// Do_actions will call ioctl to get or set infos
+func Do_actions(cmd *cobra.Command, args []string) {
+
+	var ctx cmd_context
+	no_dev := true
+	i := 0
+
+	for ; i < len(opt_args); i++ {
+		v := cmd.Flag(opt_args[i].name)
+		if v.Value.String() == "true" {
+			if opt_args[i].no_dev == false {
+				no_dev = false
+			}
+			break
+
+		}
+	}
+	if i >= len(opt_args) {
+		return
+	}
+
+	if no_dev == true {
+		if len(args) == 0 {
+			fmt.Printf("ethtool: bad command line argument(s)\n" +
+				"For more information run ethtool -h\n")
+			return
+		}
+		ctx.devname = args[0]
+	}
+	if len(args) > 1 {
+		ctx.argc = len(args) - 1
+		ctx.argp = args[1:]
+	}
+	if opt_args[i].ioctlfunc == nil {
+		fmt.Printf("Function not supported yet\n")
+		return
+	}
+	err := init_ioctl(&ctx, no_dev)
+	if err != 0 {
+		return
+	}
+	defer uninit_ioctl(&ctx)
+	opt_args[i].ioctlfunc(&ctx)
+}
+
+func Execute() {
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
 }
