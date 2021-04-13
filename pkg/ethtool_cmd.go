@@ -1802,6 +1802,72 @@ func do_getfwdump(ctx *cmd_context) int {
 	return 0
 }
 
+func do_schannels(ctx *cmd_context) int {
+	var echannels ethtool_channels
+	gchannels_changed := 0
+	channels_rx_wanted := -1
+	channels_tx_wanted := -1
+	channels_other_wanted := -1
+	channels_combined_wanted := -1
+	cmdline_channels := []cmdline_info{
+		{
+			name:       "rx",
+			tp:         CMDL_S32,
+			wanted_val: uintptr(unsafe.Pointer(&channels_rx_wanted)),
+			ioctl_val:  uintptr(unsafe.Pointer(&echannels.rx_count)),
+		},
+		{
+			name:       "tx",
+			tp:         CMDL_S32,
+			wanted_val: uintptr(unsafe.Pointer(&channels_tx_wanted)),
+			ioctl_val:  uintptr(unsafe.Pointer(&echannels.tx_count)),
+		},
+		{
+			name:       "other",
+			tp:         CMDL_S32,
+			wanted_val: uintptr(unsafe.Pointer(&channels_other_wanted)),
+			ioctl_val:  uintptr(unsafe.Pointer(&echannels.other_count)),
+		},
+		{
+			name:       "combined",
+			tp:         CMDL_S32,
+			wanted_val: uintptr(unsafe.Pointer(&channels_combined_wanted)),
+			ioctl_val:  uintptr(unsafe.Pointer(&echannels.combined_count)),
+		},
+	}
+	changed := 0
+
+	parse_generic_cmdline(ctx, &gchannels_changed,
+		&cmdline_channels)
+
+	echannels.cmd = ETHTOOL_GCHANNELS
+	err := send_ioctl(ctx, uintptr(unsafe.Pointer(&echannels)))
+	if err != nil {
+		fmt.Printf("Cannot get device channel parameters: %v\n", err)
+		return 1
+	}
+
+	do_generic_set(&cmdline_channels, &changed)
+
+	if changed == 0 {
+		fmt.Printf("no channel parameters changed.\n")
+		fmt.Printf("current values: rx %d tx %d other %d"+
+			" combined %d\n", echannels.rx_count,
+			echannels.tx_count, echannels.other_count,
+			echannels.combined_count)
+		return 0
+	}
+
+	echannels.cmd = ETHTOOL_SCHANNELS
+	err = send_ioctl(ctx, uintptr(unsafe.Pointer(&echannels)))
+	if err != nil {
+		fmt.Printf("Cannot set device channel parameters: %v\n", err)
+		return 1
+	}
+
+	return 0
+}
+
 func do_gchannels(ctx *cmd_context) int {
 
 	// if (ctx.argc != 0)
@@ -2101,7 +2167,7 @@ var (
 		{flag.Bool("w", false, "Get dump flag, data"), true, do_getfwdump, nil, "		[ data FILENAME ]\n"},
 		{flag.Bool("W", false, "Set dump flag of the device"), true, nil, nil, "		N\n"},
 		{flag.Bool("l", false, "Query Channels"), true, do_gchannels, nil, ""},
-		{flag.Bool("L", false, "Set Channels"), true, nil, nil, "               [ rx N ]\n" +
+		{flag.Bool("L", false, "Set Channels"), true, do_schannels, nil, "               [ rx N ]\n" +
 			"               [ tx N ]\n" +
 			"               [ other N ]\n" +
 			"               [ combined N ]\n"},
