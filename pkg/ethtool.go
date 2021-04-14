@@ -507,7 +507,7 @@ type ethtool_get_features_block struct {
 type ethtool_gfeatures struct {
 	cmd      uint32
 	size     uint32
-	features [0]ethtool_get_features_block
+	features [1024]ethtool_get_features_block
 }
 
 type ethtool_set_features_block struct {
@@ -518,7 +518,7 @@ type ethtool_set_features_block struct {
 type ethtool_sfeatures struct {
 	cmd      uint32
 	size     uint32
-	features [0]ethtool_set_features_block
+	features [1024]ethtool_set_features_block
 }
 
 type ethtool_ts_info struct {

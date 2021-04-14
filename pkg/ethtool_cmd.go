@@ -562,9 +562,12 @@ func dump_one_feature(indent string, name string,
 	index uint32) {
 
 	v := state.features.features[index/32].active & (1 << (index % 32))
-	rv := ref_state.features.features[index/32].active & (1 << (index % 32))
-	if ref_state != nil && (v^rv) == 0 {
-		return
+
+	if ref_state != nil {
+		rv := ref_state.features.features[index/32].active & (1 << (index % 32))
+		if (v ^ rv) == 0 {
+			return
+		}
 	}
 	active_str := "off"
 	if state.features.features[index/32].active > 0 {
@@ -1127,30 +1130,15 @@ func get_feature_defs(ctx *cmd_context) feature_defs {
 			defs.def[i].off_flag_index < 0; j++ {
 			pattern := []byte(off_flag_def[j].kernel_name)
 			name := defs.def[i].name[:]
-			fmt.Printf("pattern %s\n", string(pattern))
-			fmt.Printf("name %s\n", string(name))
-			ori_nlen := len(string(name[:]))
-			ori_patlen := len(string(pattern[:]))
+			//append a zero to slice, make it compatible with char
+			pattern = append(pattern, 0)
 
 			for k, m := 0, 0; ; {
-				if k >= ori_patlen && m >= ori_nlen {
-					defs.def[i].off_flag_index = j
-					defs.off_flag_matched[j]++
-					break
-				}
 				if pattern[k] == '*' {
 					/* There is only one wildcard; so
 					 * switch to a suffix comparison */
-					if k == ori_patlen {
-						defs.def[i].off_flag_index = j
-						defs.off_flag_matched[j]++
-						break
-					}
-					name_len := 0
-					if m <= ori_nlen {
-						break
-					}
 
+					name_len := len(name[m:])
 					pattern_len := len(string(pattern[k+1:]))
 
 					if name_len < pattern_len {
@@ -1188,7 +1176,7 @@ func do_gfeatures(ctx *cmd_context) int {
 	}
 
 	fmt.Printf("Features for %s:\n", ctx.devname)
-	fmt.Print(defs)
+	// fmt.Print(defs)
 
 	features := get_features(ctx, &defs)
 	if features.off_flags == 0 {
