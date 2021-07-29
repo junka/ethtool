@@ -4,8 +4,11 @@ A native go implementation of ethtool.
 
 Command line parameters are compatible with original version 5.4
 
+Take care that no data[0] structure in go
 
-### compile & run
+
+### Compile & Run
+
  ```make``` 
 
 ```
